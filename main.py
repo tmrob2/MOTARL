@@ -42,26 +42,25 @@ class Env1(Environment, ABC):
         self.energy += self.STEP_VALUE
 
 
-env = Env1(grid_size=grid_size, n_objs=n_objs, start_energy=1.0, num_tasks=tasks)
+env1 = Env1(grid_size=grid_size, n_objs=n_objs, start_energy=1.0, num_tasks=tasks)
+env2 = Env1(grid_size=grid_size, n_objs=n_objs, start_energy=2.0, num_tasks=tasks)
 
 
-def env_step(actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def env_step(action: np.ndarray, env: List[Environment]) -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
     """
     Returns state, reward and done flag given an action
     Actions are an array because there are multiple agents
     Rewards (output) is an array because there are multiple rewards, agent costs, task rewards
     """
-    # the return from env.step is an nd_array
-    state, reward, done = env.step(actions)  # todo this argument must be a tuple of environments?
+    state, reward, done = env[0].step(action)
     return state.astype(np.float32), reward.astype(np.float32), np.array(done, np.int32)
 
 
-def tf_env_step(actions: tf.Tensor) -> List[tf.Tensor]:
-    return tf.numpy_function(env_step, [actions], [tf.float32, tf.float32, tf.int32])
+def tf_env_step(action: tf.Tensor, env) -> List[tf.Tensor]:
+    return tf.numpy_function(env_step, [action, env], [tf.float32, tf.float32, tf.int32])
 
 
-def get_expected_returns(
-        rewards: tf.Tensor, standardise: bool = True) -> tf.Tensor:
+def get_expected_returns(rewards: tf.Tensor, standardise: bool = True) -> tf.Tensor:
     """Compute expected returns per timestep"""
     n = tf.shape(rewards)[0]
     returns = tf.TensorArray(dtype=tf.float32, size=n)
@@ -91,6 +90,7 @@ def run_episode(
     action_probs = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
     values = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
     rewards = tf.TensorArray(dtype=tf.int32, size=0, dynamic_size=True)
+    envs = [env1, env2]
 
     initial_state_shape = initial_state.shape
     state = initial_state
@@ -100,6 +100,7 @@ def run_episode(
         state = tf.expand_dims(state, 0)
         # Run the model and to get action probabilities and critic value
         action_logits_t, value = model(state)
+        print("action logits: {}", action_logits_t)
         # Sample the next action from the action probability distribution
         # Tensor values need to be restricted to the enabled actions at the current state
         action = tf.random.categorical(action_logits_t, 1)[0, 0]
@@ -109,7 +110,7 @@ def run_episode(
         # Store log probability of action chosen
         action_probs = action_probs.write(t, action_probs_t[0, action])
         # Apply actions to the environment to get the next state and reward
-        state, reward, done = tf_env_step(action)
+        state, reward, done = tf_env_step(action, envs)
         state.set_shape(initial_state_shape)
         # Store rewards
         rewards = rewards.write(t, reward)
@@ -146,6 +147,14 @@ def compute_f(ini_values: tf.Tensor, c: np.float32) -> tf.Tensor:
     return tf.math.square(tf.math.maximum(0, ini_values - c))
 
 
+def compute_sliced_softmax(output, n_actions, agent) -> tf.Tensor:
+    """The dense layer of the NN for actions returns multiple action sets. To get the action
+    sets for a particular agent i, we need to slice this array. This is instead of doing a reshape
+    operation on the network itself"""
+    a = output[0][n_actions * agent:n_actions * (agent + 1)]
+    return tf.exp(a) / tf.reduce_sum(tf.exp(a), 0)
+
+
 def compute_h(ini_values: tf.Tensor, e: np.float32, mu_ij: tf.Tensor) -> tf.Tensor:
     """h is a divergence function which determines how far away the reward frequency is from the
     required task probability threshold
@@ -160,9 +169,21 @@ def compute_h(ini_values: tf.Tensor, e: np.float32, mu_ij: tf.Tensor) -> tf.Tens
     we can record all of the v_{pi,ini} values
     """
     assert e > 0.0, "The value of task frequency requirement must be greater than zero"
+    # todo check if matmul is actually the right function, the intention is to do element wise
+    #  multiplication?
     kl = tf.matmul(ini_values, tf.math.log(ini_values) - tf.math.log(e)) + \
          tf.matmul((1.0 - ini_values), tf.math.log(1.0 - ini_values))
     tf.tensordot(mu_ij, kl)
+
+
+def compute_allocation_func(allocation_logits, n_agents, m_tasks, test=False):
+    a = tf.reshape(allocation_logits, [m_tasks, n_agents])
+    r = tf.exp(a) / tf.reduce_sum(tf.exp(a), axis=0)
+    if test:
+        print("allocator logit matrix: \n{}".format(a))
+        print("agent logits: \n{}".format(a))
+        print("softmax evaluation: \n{}".format(r))
+    return r
 
 
 class TestModelMethods(unittest.TestCase):
@@ -173,15 +194,15 @@ class TestModelMethods(unittest.TestCase):
     # todo test KL divergence function
     def test_environment(self):
         agents, tasks, grid_size, n_objs = 2, 2, (10, 10), 3
-        env.reset()
+        env1.reset()
         done = False
         for i in range(10):
             #print("Episode {}".format(i))
             while not done:
                 action = random.choice(list(Action1))
-                state, _, done = env.step(action=action)
+                state, _, done = env1.step(action=action)
                 # print([s.__str__() for s in state])
-            env.reset()
+            env1.reset()
             done = False
         return True
 
@@ -189,19 +210,26 @@ class TestModelMethods(unittest.TestCase):
         print("------------------------------------------\n")
         print("         Testing action selection           ")
         print("--------------------------------------------")
-        model = ActorCritic(6, 2, 2, 128)
-        initial_state = tf.constant(env.reset(), dtype=tf.float32)
+        actions, n_agents, m_tasks = 6, 2, 2
+        model = ActorCritic(6, n_agents, m_tasks, 128)
+        initial_state = tf.constant(env1.reset(), dtype=tf.float32)
         state = tf.expand_dims(initial_state, 0)
-        # Run the model and to get action probabilities and critic value
+        envs = [env1, env2]
+        # Run the model and to get action, and allocation probabilities as well as the critic value
         action_logits_t, allocator_logits_t, value = model(state)
         print("action_logits: {}".format(action_logits_t))
         print("Allocator logits: {}".format(allocator_logits_t))
+        mu = compute_allocation_func(allocator_logits_t, n_agents, m_tasks)
+        print("probability of allocation: \n{}".format(mu))
+        print("total probability of mu: {}".format(tf.reduce_sum(mu[:, 1])))
+        assert tf.reduce_sum(mu[:, 1]) == 1.0
         print("value: {}", value)
         # sample the next action from the action probability distribution
         action = tf.random.categorical(action_logits_t, 1)[0, 0]
+        print("sliced action: {}".format(compute_sliced_softmax(action_logits_t, len(Action1), 0)))
         print("sampled action: {}".format(action))
         # get the next state,reward, done signal
-        state, reward, done = tf_env_step(action)
+        state, reward, done = tf_env_step(action, envs)
         print("state: {}, reward: {}, done: {}".format(state, reward, done))
         print(model.summary())
         return True
@@ -210,29 +238,43 @@ class TestModelMethods(unittest.TestCase):
         print("------------------------------------------\n")
         print("              Testing episode               ")
         print("--------------------------------------------")
-        model = ActorCritic(6, 2, 2, 128)
-        initial_state = tf.constant(env.reset(), dtype=tf.float32)
+        n_actions, n_agents, m_tasks = 6, 2, 2
+        model = ActorCritic(n_actions, 2, 2, 128)
+        initial_state = tf.constant(env1.reset(), dtype=tf.float32)
         initial_state_shape = initial_state.shape
         action_probs = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
         values = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
         rewards = tf.TensorArray(dtype=tf.int32, size=0, dynamic_size=True)
+        envs = [env1, env2]
+        _, allocation_logits, _ = model(tf.expand_dims(initial_state, 0))
+        # mu is the allocation function, which is the probability of allocating a task to an
+        # agent.
+        # mu is a matrix with dimensions (m_tasks, n_agents) and when we want the distribution of allocation
+        # for a particular task we just take the corresponding row in this matrix, which will sum to one.
+        mu = compute_allocation_func(allocation_logits, n_agents, m_tasks)
 
         state = initial_state
         max_steps = 10
+        # test environment 2
         for t in tf.range(max_steps):
             state = tf.expand_dims(state, 0)
             action_logits_t, _, value = model(state)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
-            action_probs_t = tf.nn.softmax(action_logits_t)
+            action_probs_t = compute_sliced_softmax(action_logits_t, n_actions, 1)
 
             # Store critic Value (V)
             values = values.write(t, tf.squeeze(value))
 
             # store log prob of the action chosen
-            action_probs = action_probs.write(t, action_probs_t[0, action])
+            action_probs = action_probs.write(t, action_probs_t[action])
 
             # apply action to the environment to get the next state and reward
-            state, reward, done = tf_env_step(action)
+            for e in envs:
+                # now we have to be quite careful here, the state is the state
+                # relative to which environment is being observed, the state should be the position
+                # of all of the agents in a system, plus the energy of all of the agents at time t
+                # therefore we must no take the updated
+                state, reward, done = tf_env_step(action, [envs[0]])
             print("reward: {}".format(reward[0]))
             state.set_shape(initial_state_shape)
 
@@ -249,6 +291,11 @@ class TestModelMethods(unittest.TestCase):
         print("rewards, R_T: {}".format(rewards))
         return True
 
+    def test_compute_h(self):
+        pass
+
+    def test_compute_f(self):
+        pass
 
     def test_tf_rewards(self):
         """function to test what the output of the expected rewards for an episode is"""
