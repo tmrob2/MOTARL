@@ -18,7 +18,7 @@ class ActorCritic(tf.keras.Model):
         # We add an extra output layer which will be used to derive the parameters τ for the
         # deterministic allocator
         self.allocator = layers.Dense(n_agents * m_tasks)
-        self.critic = layers.Dense(m_tasks)
+        self.critic = layers.Dense(n_agents * m_tasks)
 
     def call(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
         x = self.common(inputs)

@@ -1,14 +1,14 @@
-from enum import Enum
+from enum import IntEnum
 
 class Coord:
-    def __init__(self):
-        self.x, self.y = 0, 0
+    def __init__(self, x=0, y=0):
+        self.x, self.y = x, y
 
     def set(self, x, y):
         self.x, self.y = x, y
 
 
-class Action1(Enum):
+class Action1(IntEnum):
     NOOP = 0
     FORWARD = 1
     LEFT = 2
