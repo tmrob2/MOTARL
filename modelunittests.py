@@ -1,7 +1,3 @@
-
-
-# todo convert this file to unit_tests.py, this will form the template for the implementation
-#  of modelunittests.py
 import random
 from abc import ABC
 
@@ -23,7 +19,7 @@ import unittest
 #tf.random.set_seed(seed)
 #np.random.seed(seed)
 eps = np.finfo(np.float32).eps.item()
-tasks, grid_size, n_objs = 3, (10, 10), 3
+TASKS, GRIDSIZE, N_OBJS = 3, (10, 10), 3
 
 
 class Env1(Environment, ABC):
@@ -46,9 +42,9 @@ class Env1(Environment, ABC):
         self.energy += self.STEP_VALUE
 
 
-env1 = Env1(grid_size=grid_size, n_objs=n_objs, start_energy=1.0, start_location=Coord(4, 4), num_tasks=tasks)
-env2 = Env1(grid_size=grid_size, n_objs=n_objs, start_energy=2.0, start_location=Coord(7, 3), num_tasks=tasks)
-
+env1 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=1.0, start_location=Coord(4, 4), num_tasks=TASKS)
+env2 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=2.0, start_location=Coord(7, 3), num_tasks=TASKS)
+huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 
 def compute_total_state(acc: tf.Tensor, new: tf.Tensor) -> tf.Tensor:
     """Compute a state which acknowledges the position, and energy, of all environments in a system"""
@@ -121,12 +117,6 @@ def get_expected_returns(rewards: tf.Tensor, costs: tf.Tensor, n_agents: tf.int3
     v_returns = v_returns.stack()[::-1]
     i_returns = i_returns.stack()[::-1]
     return v_returns, i_returns
-
-
-def compute_loss(action_probs: tf.Tensor, v_values: tf.Tensor, v_returns: tf.Tensor) -> tf.Tensor:
-    advantages = v_returns - v_values
-    action_log_probs = tf.math.log(action_probs)
-    ini_values = make_ini_values(v_values)
 
 
 # todo rewrite run episode according to the test function test_run_episode
@@ -205,16 +195,21 @@ def allocation_probs(allocation_logits: tf.Tensor) -> tf.Tensor:
     return tf.nn.softmax(allocation_logits)
 
 
-def make_ini_values(v_values: tf.Tensor) -> tf.Tensor:
+def make_ini_values(v_returns: tf.Tensor) -> tf.Tensor:
     """We construct this function to break the flow of tensors for values that are
     considered constant at time t, and not propagated"""
-    return tf.convert_to_tensor(v_values[:, 0].numpy())
+    return tf.convert_to_tensor(v_returns.numpy())
 
 
-def compute_f(ini_values: tf.Tensor, c: np.float32) -> tf.Tensor:
+def compute_f(cost_returns: tf.Tensor, c: tf.Tensor) -> tf.Tensor:
     """Cost function to determine if an agent has exceeded it cost threshold and applies a
     corresponding penalty"""
-    return tf.math.square(tf.math.maximum(0, ini_values - c))
+    f_val = tf.TensorArray(dtype=tf.float32, size=tf.shape(cost_returns)[0])
+    for i in range(tf.shape(c)[0]):
+        val = tf.math.square(tf.math.maximum(0, cost_returns[i] - c[i]))
+        f_val.write(i, val)
+    f_val = f_val.stack()
+    return f_val
 
 
 def compute_sliced_softmax(output, n_actions, agent) -> tf.Tensor:
@@ -225,25 +220,35 @@ def compute_sliced_softmax(output, n_actions, agent) -> tf.Tensor:
     return tf.exp(a) / tf.reduce_sum(tf.exp(a), 0)
 
 
-def compute_h(ini_values: tf.Tensor, e: np.float32, mu_ij: tf.Tensor) -> tf.Tensor:
+def compute_h(v_returns: tf.Tensor, e: np.ndarray, mu: tf.Tensor, m_tasks: tf.int32, n_agents: tf.int32) -> tf.Tensor:
     """h is a divergence function which determines how far away the reward frequency is from the
     required task probability threshold
     Parameters:
     -----------
-    ini_values: is a vector of critic from t=0 to t_max, this will actually be a tensor slice
-    because we are only looking at the jth
+    ini_values: is a vector of Expected returns E[G^{i,j} | S0 = s] from t=0 to t_max, this will
+    actually be a tensor slice because we are only looking at the jth task
 
     mu_ij: is the probability distribution of allocating task j across all agents
 
     intuitively this requires that all environments must be 'stepped' at each time step so that
     we can record all of the v_{pi,ini} values
     """
-    assert e > 0.0, "The value of task frequency requirement must be greater than zero"
-    # todo check if matmul is actually the right function, the intention is to do element wise
-    #  multiplication?
-    kl = tf.matmul(ini_values, tf.math.log(ini_values) - tf.math.log(e)) + \
-         tf.matmul((1.0 - ini_values), tf.math.log(1.0 - ini_values))
-    tf.tensordot(mu_ij, kl)
+    hreturn = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
+    for j in tf.range(m_tasks, dtype=tf.int32):
+        e_val = tf.fill(v_returns.shape[0], e[j])
+        indices = tf.constant(np.array([i * TASKS + j for i in range(n_agents)]))
+        r = tf.gather(tf.transpose(v_returns), indices=indices)
+        v_ij_ini = tf.squeeze(r)
+        i_values = tf.TensorArray(dtype=tf.float32, size=v_returns.shape[0])
+        for i in range(n_agents):
+            i_values.write(i, tf.math.scalar_mul(mu[j, i], v_ij_ini[i]))
+        i_values = i_values.stack()
+        y_value = tf.reduce_sum(i_values, axis=0)
+        kl = (y_value + eps) * (tf.math.log(y_value + eps) - tf.math.log(e_val)) + \
+             (1.0 - y_value + eps) * (tf.math.log(1.0 - y_value) - tf.math.log(1.0 - e_val))
+        hreturn = hreturn.write(j, kl)
+    hreturn = hreturn.stack()
+    return hreturn
 
 
 def compute_allocation_func(allocation_logits, n_agents, m_tasks, test=False):
@@ -253,18 +258,37 @@ def compute_allocation_func(allocation_logits, n_agents, m_tasks, test=False):
     """
     a = tf.reshape(allocation_logits, [m_tasks, n_agents])
     r = tf.exp(a) / tf.reduce_sum(tf.exp(a), axis=0)
-    if test:
-        print("allocator logit matrix: \n{}".format(a))
-        print("agent logits: \n{}".format(a))
-        print("softmax evaluation: \n{}".format(r))
     return r
 
 
+def compute_loss(
+        action_probs: tf.Tensor,
+        v_values: tf.Tensor,
+        v_returns: tf.Tensor,
+        c_returns: tf.Tensor,
+        n_agents: tf.int32,
+        m_tasks: tf.int32,
+        mu: tf.Tensor,
+        c: tf.Tensor,
+        e: np.ndarray) -> tf.Tensor:
+    advantages = v_returns - v_values
+    action_log_probs = tf.math.log(action_probs)
+    print("advantages shape", advantages.shape)
+    f_consts = compute_f(c_returns, c)
+    h_consts = compute_h(v_returns, e, mu, m_tasks, n_agents)
+    # todo I think we actually have to add the loss up for each i in I and j in J
+    # look at equations 7, 8, 9 and try and understand them thoroughly
+    loss = -tf.math.reduce_sum(action_log_probs[:, 0] * advantages[:, 0] * (f_consts[:, 0] + h_consts[0, :]))
+    for i in tf.range(1, n_agents):
+        loss += -tf.math.reduce_sum(action_log_probs[:, i] * advantages[:, i] * (f_consts[:, i] + h_consts[i, :]))
+    critic_loss = huber_loss(v_values, v_returns)
+    return loss
+
 class TestModelMethods(unittest.TestCase):
-    # todo implement a test for converting training data to correct tensor shapes
+    # implement a test for converting training data to correct tensor shapes
     # todo implement a test for an instance of calculating a loss function
     # todo test that there is no flow between A and Advantage grad_theta π(a_t|s_t)*(G - A)
-    # todo two environment step test, and extract v_pi,ini
+    # two environment step test, and extract v_pi,ini
     # todo test KL divergence function
     def test_environment(self):
         print("\n------------------------------------------")
@@ -402,7 +426,52 @@ class TestModelMethods(unittest.TestCase):
         return True
 
     def test_compute_h(self):
-        pass
+        print("\n------------------------------------------")
+        print(  "         Testing task divergence          ")
+        print(  "------------------------------------------")
+        n_actions, n_agents, m_tasks = 7, 2, TASKS
+        max_steps_per_episode = 1000
+        model = ActorCritic(n_actions, n_agents, m_tasks, 128)
+        envs = [env1, env2]
+        acc = tf.constant(np.array([], dtype=np.float32))
+        for e in envs:
+            new = tf.constant(e.reset(), dtype=tf.float32)
+            acc = compute_total_state(acc, new)
+        total_init_state = acc
+        total_init_state_tf = tf.expand_dims(total_init_state, 0)
+        _, allocation_logits, _ = model(total_init_state_tf)
+        # mu is the allocation function, which is the probability of allocating a task to an
+        # agent.
+        # mu is a matrix with dimensions (m_tasks, n_agents) and when we want the distribution of allocation
+        # for a particular task we just take the corresponding row in this matrix, which will sum to one.
+        mu = compute_allocation_func(allocation_logits, n_agents, m_tasks)
+        action_probs, values, rewards, costs = run_episode(total_init_state_tf, model, max_steps_per_episode, envs,
+                                                           n_agents,
+                                                           n_actions)
+        # returns are v_ij_ini, costs are v_i_ini
+        returns, cost_returns = get_expected_returns(rewards, costs, n_agents, m_tasks)
+
+        # test the input value of h
+        # for a given task we want u_ij * v_ij_ini i.e. all of the jth components of the values in returns
+        # The size of v_ij is t * (i*j), we want to take slices for a fixed j for each i
+        j = 0
+        indices = tf.constant([i * TASKS + j for i in range(n_agents)])
+        print("finding v_ij_ini values for indices: {}".format(indices))
+        r = tf.gather(tf.transpose(returns), indices=[[0], [3]])
+        print("r: \n", tf.squeeze(r), "\nr shape: ", tf.squeeze(r).shape)
+        action_log_probs = tf.math.log(action_probs)
+        print("action log(pr): \n", action_log_probs, "\nshape: ", action_log_probs.shape)
+        v_ij_ini = tf.squeeze(tf.transpose(r))
+        actor_loss = action_log_probs * v_ij_ini
+        print("actor loss: ", actor_loss)
+        expected_values = tf.reduce_sum(actor_loss, axis=0)
+        print("E[G | S, a]: {}".format(expected_values))
+        e_thresh = tf.constant([0.6, 0.5, 0.4], dtype=tf.float32)
+        y = tf.reduce_sum(mu[0, :] * expected_values)
+        ini_values = make_ini_values(v_returns=returns)
+        #h_vals = compute_h(ini_values, e_thresh, mu, m_tasks, n_agents)
+        print("y: ", y)
+        #print("h_vals: ", h_vals)
 
     def test_compute_f(self):
         pass
@@ -457,22 +526,28 @@ class TestModelMethods(unittest.TestCase):
         model = ActorCritic(n_actions, n_agents, m_tasks, 128)
         envs = [env1, env2]
         acc = tf.constant(np.array([], dtype=np.float32))
+        c_thresh = tf.constant([0.5, 0.5], dtype=tf.float32)
+        e_thresh = np.array([0.6, 0.6, 0.6], dtype=np.float32)
+
         for e in envs:
             new = tf.constant(e.reset(), dtype=tf.float32)
             acc = compute_total_state(acc, new)
         total_init_state = acc
         total_init_state_tf = tf.expand_dims(total_init_state, 0)
-        action_probs, values, rewards, costs = run_episode(total_init_state_tf, model, max_steps_per_episode, envs, n_agents,
-                                                    n_actions)
-        returns, costs = get_expected_returns(rewards, costs, n_agents, m_tasks)
+        _, allocation_logits, _ = model(total_init_state_tf)
+        mu = compute_allocation_func(allocation_logits, n_agents, m_tasks)
+        action_probs, values, rewards, costs = run_episode(total_init_state_tf, model, max_steps_per_episode, envs, n_agents, n_actions)
+        returns, cost_returns = get_expected_returns(rewards, costs, n_agents, m_tasks)
         print("returns shape: {}, values shape: {}".format(returns.shape, values.shape))
         # this is all of the advantages in the format (i1,j1),(i1,j2),...(i1,jm),(i2,j1),...,(in,jm)
         advantages = returns - values
         print("Advantages: \n{}".format(advantages))
         action_log_probs = tf.math.log(action_probs)
         print("action log(pr) \n{}".format(action_log_probs))
+        v_returns = make_ini_values(returns)
+        v_values = make_ini_values(values)
+        compute_loss(action_probs, v_values, v_returns, cost_returns, n_agents, m_tasks, mu, c_thresh, e_thresh)
         return True
-
 
 
 if __name__ == '__main__':
