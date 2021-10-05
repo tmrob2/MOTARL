@@ -10,8 +10,8 @@ import statistics
 
 step_rew0 = 10
 task_prob0 = 0.8
-NUMAGENTS, TASKS, GRIDSIZE, N_OBJS = 2, 1, (10, 10), 3
-max_steps_per_episode = 1000
+NUMAGENTS, TASKS, GRIDSIZE, N_OBJS = 2, 1, (5, 5), 3
+# Discount factor for future rewards
 gamma = 1.0
 mu = 1.0 / NUMAGENTS # fixed even probability of allocating each task to each agent
 lam = 1.0
@@ -40,15 +40,15 @@ class Env1(Environment, ABC):
         self.energy += self.STEP_VALUE
 
 
-env1 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=10.0, start_location=Coord(4, 4), num_tasks=TASKS)
-env2 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=20.0, start_location=Coord(7, 3), num_tasks=TASKS)
+env1 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=1.0, start_location=Coord(2, 2), num_tasks=TASKS, name="env1")
+env2 = Env1(grid_size=GRIDSIZE, n_objs=N_OBJS, start_energy=2.0, start_location=Coord(2, 3), num_tasks=TASKS, name="env2")
 num_actions = len(Action1) # 2
 num_hidden_units = 128
 models = [ActorCritic(num_actions, num_hidden_units, TASKS, name="AC{}".format(i)) for i in range(NUMAGENTS)]
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
-min_episodes_criterion = 100
-max_episodes = 10000
+min_episodes_criterion = 1
+max_episodes = 2
 max_steps_per_episode = 1000
 envs = [env1, env2]
 motap = motaplib.TfObsEnv(envs, models)
@@ -58,9 +58,6 @@ motap = motaplib.TfObsEnv(envs, models)
 # consecutive trials
 reward_threshold = 195
 running_reward = 0
-
-# Discount factor for future rewards
-gamma = 1.00 #0.99
 
 # Keep last episodes reward
 episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
@@ -89,8 +86,8 @@ with tqdm.trange(max_episodes) as t:
         episode_reward=episode_reward, running_reward=running_reward)
 
     # Show average episode reward every 10 episodes
-    if i % 10 == 0:
-      pass # print(f'Episode {i}: average reward: {avg_reward}')
+    #if i % 10 == 0:
+      #print(f'Episode {i}: average reward: {running_reward}')
 
     if running_reward > reward_threshold and i >= min_episodes_criterion:
         break

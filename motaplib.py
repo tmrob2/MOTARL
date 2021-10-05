@@ -89,7 +89,7 @@ class TfObsEnv:
         :param mu:
         :return:
         """
-        y = X.get_shape()[1]
+        _, y = X.get_shape()
         # The size of H should be m_agents + 1
         H = tf.TensorArray(dtype=tf.float32, size=y)
         H = H.write(0, lam * Xi[0])  # this is the agent rewards
@@ -97,7 +97,7 @@ class TfObsEnv:
             h_val = chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu
             H = H.write(j, h_val)
         H = H.stack()
-        return tf.convert_to_tensor(H)
+        return H
 
     @tf.function
     def compute_loss(
@@ -113,7 +113,6 @@ class TfObsEnv:
             e: tf.Tensor) -> tf.Tensor:
         """Computes the combined actor-critic loss."""
 
-        a = returns - values
         H = self.compute_H(ini_value, ini_values_i, lam, chi, mu, e)
         H = tf.expand_dims(H, 0)
         advantage = tf.matmul(returns - values, tf.transpose(H))
@@ -182,7 +181,7 @@ class TfObsEnv:
 
         return action_probs, values, rewards
 
-    @tf.function
+    #@tf.function
     def train_step(
             self,
             optimizer: tf.keras.optimizers.Optimizer,
@@ -207,6 +206,7 @@ class TfObsEnv:
 
                 # Run an episode
                 action_probs, values, rewards = self.run_episode(initial_state, i, max_steps_per_episode)
+                print("rewards for model: {}: {}".format(i, rewards))
 
                 # Get expected rewards
                 returns = self.get_expected_returns(rewards, gamma, m_tasks, False)
@@ -216,14 +216,18 @@ class TfObsEnv:
                 values_l.append(values)
                 rewards_l.append(rewards)
                 returns_l.append(returns)
-
-            ini_values = [tf.convert_to_tensor(x) for x in values_l]
+            ini_values = tf.convert_to_tensor([x[0, :] for x in values_l])
             for i in range(num_models):
                 # Get loss
-                values = ini_values[i]
-                ini_values_i = ini_values[i][0, :]
-                loss = self.compute_loss(action_probs_l[i], values_l[i], returns_l[i], values, ini_values_i, lam, chi, mu, e)
+                values = values_l[i]
+                returns = returns_l[i]
+                ini_values_i = ini_values[i]
+                loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e)
                 loss_l.append(loss)
+                print(f'ini_values for model#{i}: {ini_values_i}')
+                print(f'loss value for model#{i}: {loss}')
+                print(f'returns for model#{i}: {returns[0]}')
+
         # compute the gradient from the loss vector
         vars_l = [m.trainable_variables for m in self.models]
         grads_l = tape.gradient(loss_l, vars_l)

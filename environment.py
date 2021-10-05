@@ -1,4 +1,4 @@
-from grid import Grid, GOAL_VALUE
+from grid import Grid, GOAL_VALUE, WALL_VALUE
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 from utils import Coord
@@ -10,10 +10,12 @@ VISIBLE_RADIUS = 1
 
 
 class EnvHistory:
-    def __init__(self, grid, energy, visible):
+    def __init__(self, position, grid, energy, visible, success):
+        self.position = position
         self.grid = grid
         self.energy = energy
         self.visibles = visible
+        self.success = success
 
 
 class State:
@@ -33,7 +35,7 @@ class Environment:
     ENERGY = None
     STEP_VALUE = -0.02
 
-    def __init__(self, grid_size, n_objs, start_energy, start_location: Coord, num_tasks, step_value=None):
+    def __init__(self, grid_size, n_objs, start_energy, start_location: Coord, num_tasks, step_value=None, name=None):
         self.grid = Grid(grid_size=grid_size, n_obj=n_objs)
         self.t = 0
         self.history = []
@@ -47,6 +49,7 @@ class Environment:
         self.dead = False
         self.success = False
         self.visible = None
+        self.name = name
         if step_value is not None:
             self.STEP_VALUE = step_value
 
@@ -86,11 +89,11 @@ class Environment:
         grid = np.array(self.grid.grid)
         grid[self.position.x, self.position.y] = self.energy * 0.5
         self._set_visibility(self.grid)
-        self.history.append(EnvHistory(grid, self.energy, self.visible))
+        self.history.append(EnvHistory(self.position, grid, self.energy, self.visible, self.success))
 
     def step(self, action):
         """Because this is a MAS we need to update the state of the system based on all of the agents"""
-        task_rewards = np.array([0] * self.num_tasks)  # will be size j
+        rewards = np.array([0] * (self.num_tasks + 1))  # will be size j
 
         # Todo at this point we also have to generate a word, or each agent must generate a
         #  word but we will leave this for now and work on the agents moving around
@@ -99,17 +102,17 @@ class Environment:
             self.act(action)
             value = self.grid.grid[self.position.x, self.position.y]
             self.energy += value
-            #print("Update: energy: {}, e: {}, act: {}, pos: ({},{})".format(self.energy, index, action, self.position.x, self.position.y))
             if self.energy <= 0.0:
                 self.dead = True
             #print("e < 0", self.energy <= 0.0)
             # the task rewards needs to be implemented via a Task
-            if value == GOAL_VALUE:
-                task_rewards[0] = 1  # todo i will actually depend on the tasks
+            if value == WALL_VALUE:
+                rewards[0] = self.energy
+                rewards[1] = 1.0
                 self.success = True
         done = True if self.success or self.dead else False
         self._record_step()
-        return self._visible_state, task_rewards, done
+        return self._visible_state, rewards, done
 
 
 
