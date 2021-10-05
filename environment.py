@@ -88,13 +88,12 @@ class Environment:
         self._set_visibility(self.grid)
         self.history.append(EnvHistory(grid, self.energy, self.visible))
 
-    def step(self, action, index):
+    def step(self, action):
         """Because this is a MAS we need to update the state of the system based on all of the agents"""
         task_rewards = np.array([0] * self.num_tasks)  # will be size j
 
         # Todo at this point we also have to generate a word, or each agent must generate a
         #  word but we will leave this for now and work on the agents moving around
-        prev_energy = copy.copy(self.energy)
         if not(self.dead or self.success):
             #print("success: {}, dead: {}".format(self.success, self.dead))
             self.act(action)
@@ -104,12 +103,13 @@ class Environment:
             if self.energy <= 0.0:
                 self.dead = True
             #print("e < 0", self.energy <= 0.0)
+            # the task rewards needs to be implemented via a Task
             if value == GOAL_VALUE:
-                task_rewards[index] = 1  # todo i will actually depend on the tasks
+                task_rewards[0] = 1  # todo i will actually depend on the tasks
                 self.success = True
         done = True if self.success or self.dead else False
         self._record_step()
-        return self._visible_state, task_rewards, prev_energy - self.energy, done
+        return self._visible_state, task_rewards, done
 
 
 
