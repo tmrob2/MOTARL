@@ -1,118 +1,120 @@
-from grid import Grid, GOAL_VALUE, WALL_VALUE
-import numpy as np
-from typing import List, Tuple, Optional, Dict
-from utils import Coord
-from abc import abstractmethod
-import copy
+from gym_minigrid.envs import RoomGrid, EmptyEnv
+from gym_minigrid.minigrid import *
+from gym.envs.registration import register
+from gym_minigrid.wrappers import *
+
+# todo override minigrid env to develop our own reward function
 
 
-VISIBLE_RADIUS = 1
+def convert_to_flat_and_full(env):
+    """A function which manipulates the environment to give outputs which our A2C algo expects"""
+    env_fobs = FullyObsWrapper(env)
+    flat_env = FlatObsWrapper(env_fobs)
+    return flat_env
 
 
-class EnvHistory:
-    def __init__(self, position, grid, energy, visible, success):
-        self.position = position
-        self.grid = grid
-        self.energy = energy
-        self.visibles = visible
-        self.success = success
+class OneObjRoom(MiniGridEnv):
 
+    def __init__(
+            self,
+            size=4,
+            num_objs=1
+    ):
+        self.num_objs = num_objs
+        super().__init__(
+            grid_size=size,
+            max_steps=2000,
+            see_through_walls=True
+        )
 
-class State:
-    def __init__(self, energy, position: Coord):
-        self.energy = energy
-        self.position = position
+    def _gen_grid(self, height, width):
+        self.grid = Grid(height, width)
+        # Generate the surrounding walls
+        self.grid.horz_wall(0, 0)
+        self.grid.horz_wall(0, height - 1)
+        self.grid.vert_wall(0, 0)
+        self.grid.vert_wall(width - 1, 0)
 
-    def to_ndarray(self):
-        return np.array([self.energy, self.position.x, self.position.y])
+        # Place a goal square in the bottom-right corner
+        self.put_obj(Goal(), width - 2, height - 2)
 
-    def __str__(self):
-        return "pos: ({},{}), e: {}".format(self.position.x, self.position.y, self.energy)
+        types = ['key', 'ball']
 
+        objs = []
 
-class Environment:
+        # For each object to be generated
+        while len(objs) < self.num_objs:
+            objType = self._rand_elem(types)
+            objColor = self._rand_elem(COLOR_NAMES)
 
-    ENERGY = None
-    STEP_VALUE = -0.02
+            if objType == 'key':
+                obj = Key(objColor)
+            elif objType == 'ball':
+                obj = Ball(objColor)
 
-    def __init__(self, grid_size, n_objs, start_energy, start_location: Coord, num_tasks, step_value=None, name=None):
-        self.grid = Grid(grid_size=grid_size, n_obj=n_objs)
-        self.t = 0
-        self.history = []
-        self.position = Coord()
-        self.start_position = Coord()
-        self.position.set(start_location.x, start_location.y)
-        self.start_position = copy.copy(self.position)
-        self.energy = start_energy
-        self.ENERGY = start_energy
-        self.num_tasks = num_tasks
-        self.dead = False
-        self.success = False
-        self.visible = None
-        self.name = name
-        if step_value is not None:
-            self.STEP_VALUE = step_value
+            self.place_obj(obj)
+            objs.append(obj)
 
-
-    @abstractmethod
-    def act(self, action):
-        ...
-
-    def set_init_state(self, position: Coord, energy):
-        self.position = position
-        self.energy = energy
-        self.start_position = self.position
-
-    def reset(self):
-        """Start a new episode by resetting the grid and a agents"""
-        self.grid.reset()
-        self.position = copy.copy(self.start_position)
-        self.t = 0
-        self.history = []
-        self.energy = self.ENERGY
-        self.dead = False
-        self.success = False
-        self.visible = None
-        return self._visible_state
-
-    @property
-    def _visible_state(self):
-        """State of the system"""
-        state = State(energy=self.energy, position=self.position).to_ndarray()
-        return state
-
-    def _set_visibility(self, grid):
-        self.visible = np.array(grid.visible(self.position))
-
-    def _record_step(self):
-        """Add the current state to history for display later"""
-        grid = np.array(self.grid.grid)
-        grid[self.position.x, self.position.y] = self.energy * 0.5
-        self._set_visibility(self.grid)
-        self.history.append(EnvHistory(self.position, grid, self.energy, self.visible, self.success))
+        # Randomize the player start position and orientation
+        self.place_agent()
+        self.mission = 'Complete the tasks'
 
     def step(self, action):
-        """Because this is a MAS we need to update the state of the system based on all of the agents"""
-        rewards = np.array([0] * (self.num_tasks + 1))  # will be size j
+        obs, reward, done, info = super().step(action)
+        fwd_pos = self.front_pos
+        fwd_cell = self.grid.get(*fwd_pos)
+        obj_type = "" if fwd_cell is None else fwd_cell.type
 
-        # Todo at this point we also have to generate a word, or each agent must generate a
-        #  word but we will leave this for now and work on the agents moving around
-        if not(self.dead or self.success):
-            #print("success: {}, dead: {}".format(self.success, self.dead))
-            self.act(action)
-            value = self.grid.grid[self.position.x, self.position.y]
-            self.energy += value
-            if self.energy <= 0.0:
-                self.dead = True
-            #print("e < 0", self.energy <= 0.0)
-            # the task rewards needs to be implemented via a Task
-            if value == WALL_VALUE:
-                rewards[0] = self.energy
-                rewards[1] = 1.0
-                self.success = True
-        done = True if self.success or self.dead else False
-        self._record_step()
-        return self._visible_state, rewards, done
+        print("obj in front of agent: {}, action: {}, position: {}".format(obj_type, self.actions(action), self.agent_pos))
+        return obs, reward, done, info
+
+
+class EmptyRoom5x5(EmptyEnv):
+    def __init__(self):
+        super().__init__(size=5, agent_start_pos=(1,1))
+
+    def step(self, action):
+        # todo adjust this with DFA acceptance
+        obs, reward, done, info = super().step(action)
+        print("position: {}, done: {}".format(self.agent_pos, done))
+        if done:
+            output_reward = np.array([reward, 0.0])
+        else:
+            output_reward = np.array([reward, 1.0])
+        return obs, output_reward, done, info
+
+
+class PuzzleRoom(RoomGrid):
+    """Find the goal"""
+    def __init__(self, seed=None):
+        room_size = 6
+        super().__init__(
+            num_rows=1,
+            num_cols=2,
+            room_size=room_size,
+            max_steps=8 * room_size ** 2,
+            seed=seed
+        )
+
+    def _gen_grid(self, width, height):
+        super()._gen_grid(width, height)
+
+        # Add a box to the room on the right
+        obj, _ = self.add_object(1, 0, kind='box')
+        # Make sure that the rooms are directly connected by a locked door
+        door, _ = self.add_door(0, 0, 0, locked=True)
+        # Add a key to unlock the door
+        self.add_object(0, 0, 'key', door.color)
+
+        self.place_agent(0, 0)
+        self.obj = obj
+
+    def step(self, action):
+        # todo adjust this with DFA acceptance
+        obs, reward, done, info = super().step(action)
+        print("position: {}".format(self.agent_pos))
+        return obs, reward, done, info
+
 
 
 

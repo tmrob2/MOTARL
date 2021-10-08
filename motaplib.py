@@ -1,19 +1,20 @@
-from abc import ABC
-from utils import Coord, Action1
 import numpy as np
-from environment import Environment
+from deprecated.environment import Environment
 import tensorflow as tf
-import statistics
-import tqdm
-from typing import Any, List, Sequence, Tuple
+from dfa import DFA
+from typing import List, Tuple
 
 eps = np.finfo(np.float32).eps.item()
 huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 
+# todo make a motap reset function which resets the DFA as well
 class TfObsEnv:
-    def __init__(self, envs: List[Environment], models: List[tf.keras.Model]):
+    def __init__(self, envs: List[Environment], models: List[tf.keras.Model], dfas: List[DFA]):
         self.envs: List[Environment] = envs
+        self.dfas: List[DFA] = dfas
         self.models: List[tf.keras.Model] = models
+        self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
+        self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
 
     def env_step(self, action: np.ndarray, env_index: np.ndarray) \
             -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
@@ -23,9 +24,26 @@ class TfObsEnv:
         Rewards (output) is an array because there are multiple rewards, agent costs, task rewards
         """
         # here we always select env[0] because the input to this function is always one env object
-        state, reward, done = self.envs[env_index[0]].step(action)
-        return state.astype(np.float32), reward.astype(np.float32), np.array(done, np.int32)
+        state, reward, done, _ = self.envs[env_index[0]].step(action)
+        rewards = np.array([reward] + [0.0] * len(self.dfas))
+        for (i, dfa) in enumerate(self.dfas):
+            current_state = self.dfas[env_index[0]].next(self.dfas[env_index[0]].current_state, self.envs[env_index[0]])
+            dfa.non_reachable(current_state)
+            if dfa.reward_assigned() and dfa.accepting(current_state) and done:
+                # that is the reward assigned is False so that we only have one off rewards
+                rewards[i + 1] = 1.0
+                dfa.complete = True
+            self.dfas[env_index[0]].current_state = current_state
 
+        if not all(dfa.complete for dfa in self.dfas):
+            done = False
+
+        if all(dfa.dead for dfa in self.dfas):
+            done = True
+
+        print("reward: {}".format(rewards))
+
+        return state.astype(np.float32), rewards.astype(np.float32), np.array(done, np.int32)
 
     def tf_env_step(self, action: tf.Tensor, env_index: tf.int32) -> List[tf.Tensor]:
         """
@@ -33,7 +51,6 @@ class TfObsEnv:
         returns model parameters defined in model.py of a tf.keras.model
         """
         return tf.numpy_function(self.env_step, [action, [env_index]], [tf.float32, tf.float32, tf.int32])
-
 
     def get_expected_returns(
             self,
@@ -49,7 +66,7 @@ class TfObsEnv:
         rewards = tf.cast(rewards[::-1], dtype=tf.float32)
 
         # discounted_sum = tf.constant(0.0)
-        discounted_sum = tf.constant([0.0] * (num_tasks))
+        discounted_sum = tf.constant([0.0] * (num_tasks + 1))
         discounted_sum_shape = discounted_sum.shape
         for i in tf.range(n):
             reward = rewards[i]
@@ -64,7 +81,6 @@ class TfObsEnv:
 
         return returns
 
-
     def df(self, x: tf.Tensor, c: tf.float32) -> tf.Tensor:
       """Threshold '<=c' is used as running rewards (not costs) are considered."""
       if x <= c:
@@ -72,14 +88,14 @@ class TfObsEnv:
       else:
         return tf.convert_to_tensor(0.0)
 
-    @tf.function
+    #@tf.function
     def dh(self, x: tf.float32, e: tf.float32) -> tf.Tensor:
         if tf.greater_equal(e, x) and tf.greater(x, 0.0):
             return tf.math.log(x / e) - tf.math.log((1.0 - x) / (1.0 - e))
         else:
             return tf.convert_to_tensor(0.0)
 
-    @tf.function
+    #@tf.function
     def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.float32, e: tf.Tensor) -> tf.Tensor:
         """
         :param X:
@@ -99,7 +115,7 @@ class TfObsEnv:
         H = H.stack()
         return H
 
-    @tf.function
+    #@tf.function
     def compute_loss(
             self,
             action_probs: tf.Tensor,
@@ -206,7 +222,6 @@ class TfObsEnv:
 
                 # Run an episode
                 action_probs, values, rewards = self.run_episode(initial_state, i, max_steps_per_episode)
-                print("rewards for model: {}: {}".format(i, rewards))
 
                 # Get expected rewards
                 returns = self.get_expected_returns(rewards, gamma, m_tasks, False)
@@ -224,9 +239,9 @@ class TfObsEnv:
                 ini_values_i = ini_values[i]
                 loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e)
                 loss_l.append(loss)
-                print(f'ini_values for model#{i}: {ini_values_i}')
-                print(f'loss value for model#{i}: {loss}')
-                print(f'returns for model#{i}: {returns[0]}')
+                #print(f'ini_values for model#{i}: {ini_values_i}')
+                #print(f'loss value for model#{i}: {loss}')
+                #print(f'returns for model#{i}: {returns[0]}')
 
         # compute the gradient from the loss vector
         vars_l = [m.trainable_variables for m in self.models]
@@ -240,7 +255,9 @@ class TfObsEnv:
 
         ### For convenience, just return the first episode_reward to the console.
         ### To improve the 'tqdm.trange' code (below) in future.
-        return episode_reward_l[0]
+        self.episode_reward.assign(episode_reward_l[0])
+        #tf.print(episode_reward_l[0])
+        self.mean.assign_add(episode_reward_l[0])
 
 
 

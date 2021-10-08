@@ -16,7 +16,6 @@ class ActorCritic(tf.keras.Model):
 
         self.common = layers.Dense(hidden_units, activation="relu")
         self.actor = layers.Dense(n_actions)
-        #self.allocator = layers.Dense(n_agents * m_tasks)
         self.critic = layers.Dense(m_tasks + 1)  # tasks + the agent
         self.model_name = name
 
