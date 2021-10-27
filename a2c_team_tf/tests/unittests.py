@@ -14,6 +14,8 @@ import statistics
 
 max_steps_per_episode = 1000
 seed = 103
+render_env = False
+print_rewards = False
 # tf.random.set_seed(seed)
 # np.random.seed(seed)
 register(
@@ -174,8 +176,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [copy.deepcopy(prod_dfa) for _ in range(N_AGENTS)]
 
         # Set the env config
-        render_env = False
-        print_rewards = False
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
@@ -192,7 +192,7 @@ class TestModelMethods(unittest.TestCase):
                 # print("state", state['image'])
         return True
 
-    def _test_episode(self):
+    def test_episode(self):
         """
         Given a set of tasks, complete all the tasks in one episode. This will
         be a randomly accomplished because the model has not yet been trained
@@ -211,8 +211,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [prod_dfa] * num_models
 
         # Set the configuration of the test
-        render_env = False
-        print_rewards = False
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
@@ -259,8 +257,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
 
         # Set the configuration of the test
-        render_env = False
-        print_rewards = False
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
@@ -285,8 +281,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
 
         # Set the configuration of the test
-        render_env = False
-        print_rewards = False
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
@@ -337,8 +331,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
 
         # Set the configuration of the test
-        render_env = False
-        print_rewards = False
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
@@ -349,6 +341,11 @@ class TestModelMethods(unittest.TestCase):
         print()
         print("-----------------------------------")
         print("           testing train           ")
+        print(""" 
+        trains a 2 x 2 environment with a 
+        key and a ball, there a two agents and 
+        two tasks. An agents mission is to pick 
+        up both the key and the ball        """)
         print("-----------------------------------")
         num_models = 2
         task1 = make_pickup_key_dfa()
@@ -357,8 +354,6 @@ class TestModelMethods(unittest.TestCase):
         dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
 
         # Set the configuration of the test
-        render_env = False
-        print_rewards = False
         max_episodes = 100
         min_episodes_criterion = 10
         reward_threshold = 10
@@ -382,6 +377,7 @@ class TestModelMethods(unittest.TestCase):
 
                 if running_reward < reward_threshold and tt >= min_episodes_criterion:
                     break
+            print(f'\nSolved at episode {tt}: average reward: {running_reward:.2f}!')
 
 
 if __name__ == '__main__':
