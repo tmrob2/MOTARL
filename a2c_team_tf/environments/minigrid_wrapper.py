@@ -3,8 +3,6 @@ from gym_minigrid.minigrid import *
 from gym.envs.registration import register
 from gym_minigrid.wrappers import *
 
-# todo override minigrid env to develop our own reward function
-
 
 def convert_to_flat_and_full(env):
     """A function which manipulates the environment to give outputs which our A2C algo expects"""
@@ -13,19 +11,29 @@ def convert_to_flat_and_full(env):
     return flat_env
 
 
-class OneObjRoom(MiniGridEnv):
+class ObjRoom(MiniGridEnv):
 
     def __init__(
             self,
             size=4,
-            num_objs=1
+            num_keys=1,
+            num_balls=1,
+            door_pos=None,
+            types=None
     ):
-        self.num_objs = num_objs
+        self.num_objs = num_keys + num_balls
+        self.num_keys = num_keys
+        self.num_balls = num_balls
+        self.types = ['ball', 'key'] if types is None else types
+        self.door_pos = door_pos
         super().__init__(
             grid_size=size,
             max_steps=2000,
             see_through_walls=True
         )
+
+    def _reward(self):
+        return 10.0
 
     def _gen_grid(self, height, width):
         self.grid = Grid(height, width)
@@ -36,22 +44,23 @@ class OneObjRoom(MiniGridEnv):
         self.grid.vert_wall(width - 1, 0)
 
         # Place a goal square in the bottom-right corner
-        self.put_obj(Goal(), width - 2, height - 2)
+        #self.put_obj(Goal(), width - 2, height - 2)
+        if self.door_pos is not None:
+            self.grid.set(*self.door_pos, Door('red'))
 
-        types = ['key', 'ball']
+        types = self.types
 
         objs = []
 
-        # For each object to be generated
-        while len(objs) < self.num_objs:
-            objType = self._rand_elem(types)
-            objColor = self._rand_elem(COLOR_NAMES)
+        # For each object to be generated,
+        # todo cannot be random, must be statically set because we sample a number of environments
+        for key in range(self.num_keys):
+            obj = Key('red')
+            self.place_obj(obj)
+            objs.append(obj)
 
-            if objType == 'key':
-                obj = Key(objColor)
-            elif objType == 'ball':
-                obj = Ball(objColor)
-
+        for ball in range(self.num_balls):
+            obj = Ball('blue')
             self.place_obj(obj)
             objs.append(obj)
 
@@ -61,12 +70,24 @@ class OneObjRoom(MiniGridEnv):
 
     def step(self, action):
         obs, reward, done, info = super().step(action)
-        fwd_pos = self.front_pos
-        fwd_cell = self.grid.get(*fwd_pos)
-        obj_type = "" if fwd_cell is None else fwd_cell.type
 
-        print("obj in front of agent: {}, action: {}, position: {}".format(obj_type, self.actions(action), self.agent_pos))
+        reward = self.step_count
+        # fwd_pos = self.front_pos
+        # fwd_cell = self.grid.get(*fwd_pos)
+        # obj_type = "" if fwd_cell is None else fwd_cell.type
+
+        # print("obj in front of agent: {}, action: {}, position: {}".format(obj_type, self.actions(action), self.agent_pos))
         return obs, reward, done, info
+
+
+class OneKeyRoom3x3(ObjRoom):
+    def __init__(self):
+        super(OneKeyRoom3x3, self).__init__(size=5, types=['key'], num_keys=1, num_balls=1)
+
+
+class OneKeyRoom2x2(ObjRoom):
+    def __init__(self):
+        super(OneKeyRoom2x2, self).__init__(size=4, types=['key'], num_keys=1, num_balls=1)
 
 
 class EmptyRoom5x5(EmptyEnv):

@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from utils import Coord
+from a2c_team_tf.utils import Coord
 
 GOAL_VALUE = 1000
 WALL_VALUE = -10

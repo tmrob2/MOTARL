@@ -1,6 +1,6 @@
 from deprecated.grid import Grid, WALL_VALUE
 import numpy as np
-from utils import Coord
+from a2c_team_tf.utils import Coord
 from abc import abstractmethod
 import copy
 

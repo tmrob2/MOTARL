@@ -19,6 +19,6 @@ class ActorCritic(tf.keras.Model):
         self.critic = layers.Dense(m_tasks + 1)  # tasks + the agent
         self.model_name = name
 
-    def call(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    def __call__(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         x = self.common(inputs)
         return self.actor(x), self.critic(x)

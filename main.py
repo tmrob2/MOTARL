@@ -1,10 +1,6 @@
 import gym
-import tqdm
-from model import ActorCritic
+from a2c_team_tf.nets.base import ActorCritic
 import tensorflow as tf
-import motaplib
-from gym.envs.registration import register
-import numpy as np
 
 seed = 103
 # tf.random.set_seed(seed)
