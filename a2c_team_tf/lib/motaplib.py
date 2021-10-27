@@ -31,7 +31,6 @@ class TfObsEnv:
         to be a tf graph, all inputs should be arrays
         :return state, reward and done. All outputs should be numpy arrays.
         """
-        # here we always select env[0] because the input to this function is always one env object
         ii: int = env_index
         state, reward, done, _ = self.envs[ii].step(action)
         self.dfas[ii].next(self.envs[ii])  # sets the next state of the DFAs
@@ -95,7 +94,6 @@ class TfObsEnv:
 
     @staticmethod
     def df(x: tf.Tensor, c: tf.float32) -> tf.Tensor:
-      """Threshold '<=c' is used as running rewards (not costs) are considered."""
       if tf.greater_equal(x, c):
           tf.print(f"x: {x}, c: {c}")
           return 2*(x-c)
@@ -127,8 +125,12 @@ class TfObsEnv:
         f = lam * self.df(Xi[0], c)
         # print(f"Xi: {Xi[0]}")
         # print(f"f: {f}")
-        H = H.write(0, f)  # this is the agent rewards, a value that we are looking to maximise?
-        for j in tf.range(start=1, limit=y):  # these are the task rewards
+        H = H.write(0, f)
+        # this is the agent rewards, if the agent returns a value greater than c, then f > 0 otherwise f will be 0
+        # optimal policies produce returns with either 0 or some minimised value of f.
+        for j in tf.range(start=1, limit=y):
+            # these are the task rewards, task rewards implement a KL div away from the probability threshold
+            # if the probability of completing a task is less than the threshold, dh > 0 otherwise dh == 0
             h_val = chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu
             H = H.write(j, h_val)
         H = H.stack()
