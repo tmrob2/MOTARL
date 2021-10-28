@@ -13,16 +13,11 @@ import collections
 import statistics
 
 max_steps_per_episode = 1000
-seed = 103
+# seed = 103
 render_env = False
 print_rewards = False
 # tf.random.set_seed(seed)
 # np.random.seed(seed)
-register(
-    id="empty-room-5x5-v0",
-    entry_point='a2c_team_tf.environments.minigrid_wrapper:EmptyRoom5x5',
-    max_episode_steps=max_steps_per_episode
-)
 
 register(
     id="obj1-room-3x3-v0",
@@ -35,11 +30,20 @@ register(
     entry_point='a2c_team_tf.environments.minigrid_wrapper:OneKeyRoom2x2',
     max_episode_steps=max_steps_per_episode
 )
+
+register(
+    id="key-room-lava-5x5-noisy-v0",
+    entry_point='a2c_team_tf.environments.minigrid_wrapper:Room5x5RandomOneKey',
+    max_episode_steps=max_steps_per_episode
+)
+
 env1 = gym.make('obj1-room-2x2-v0')
 env1_ = convert_to_flat_and_full(env1)
 env2 = gym.make('obj1-room-2x2-v0')
 env2_ = convert_to_flat_and_full(env2)
 envs = [env1_, env2_]
+env3 = gym.make('key-room-lava-5x5-noisy-v0')
+env3_ = convert_to_flat_and_full(env3)
 
 
 # Very simple task to pick up a key
@@ -98,7 +102,7 @@ def fail(_):
 
 
 def make_key_dfa():
-    """Task: Pick up a key move it to 1,1, then go to the goal state"""
+    """Task: Carry a key to the goal state"""
     dfa = DFA(start_state="I", acc=["D"], rej=["F"])
     dfa.states = MoveKeyStates()
     dfa.add_state(dfa.states.init, pickup_key)
