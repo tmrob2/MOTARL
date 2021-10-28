@@ -1,5 +1,5 @@
 import gym
-from a2c_team_tf.nets.base import ActorCritic
+from a2c_team_tf.nets.shared import SharedActorCritic
 import tensorflow as tf
 
 seed = 103
@@ -19,6 +19,6 @@ c = step_rew0
 e = task_prob0 # task reward threshold
 num_actions = env.action_space.n
 num_hidden_units = 128
-models = [ActorCritic(num_actions, num_hidden_units, TASKS, name="AC{}".format(i)) for i in range(NUMAGENTS)]
+models = [SharedActorCritic(num_actions, num_hidden_units, TASKS, name="AC{}".format(i)) for i in range(NUMAGENTS)]
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 

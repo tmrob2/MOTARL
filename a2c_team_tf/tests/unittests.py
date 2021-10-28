@@ -1,7 +1,7 @@
 from abc import ABC
 import copy
 import unittest
-from a2c_team_tf.nets.base import ActorCritic
+from a2c_team_tf.nets.shared import ActorCritic
 import tensorflow as tf
 import tqdm
 from a2c_team_tf.lib import motaplib
@@ -134,11 +134,12 @@ step_rew0 = 10
 task_prob0 = 0.8
 N_AGENTS, N_TASKS, N_OBJS = 2, 2, 2
 gamma = 1.0
-mu = 1.0 / N_AGENTS  # fixed even probability of allocating each task to each agent
+# mu = 1.0 / N_AGENTS  # fixed even probability of allocating each task to each agent
 lam = 1.0
 chi = 1.0
 c = step_rew0
 e = task_prob0  # task reward threshold
+alpha = 0.01
 num_actions = env1.action_space.n
 num_hidden_units = 128
 models = [ActorCritic(num_actions, num_hidden_units, N_TASKS, name="AC{}".format(i)) for i in range(N_AGENTS)]
@@ -192,7 +193,14 @@ class TestModelMethods(unittest.TestCase):
                 # print("state", state['image'])
         return True
 
-    def test_episode(self):
+    def test_neural_network_architectures(self):
+        pass
+
+    def test_allocator_param_auto_diff(self):
+        """A function which tests the auto-differentiation for task allocation"""
+        pass
+
+    def _test_episode(self):
         """
         Given a set of tasks, complete all the tasks in one episode. This will
         be a randomly accomplished because the model has not yet been trained
@@ -237,13 +245,7 @@ class TestModelMethods(unittest.TestCase):
             print("rewards: \{}".format(rewards[-1]))
         return True
 
-    def test_compute_h(self):
-        pass
-
-    def test_compute_f(self):
-        pass
-
-    def test_expected_returns(self):
+    def _test_expected_returns(self):
         """function to test the expected returns for an episode, an important step before
         calculating the loss"""
         print()
@@ -269,10 +271,10 @@ class TestModelMethods(unittest.TestCase):
             print("returns: \n{}".format(returns[0]))
         return True
 
-    def test_compute_loss(self):
+    def _test_compute_allocation_loss(self):
         print()
         print("-----------------------------------")
-        print("           testing loss            ")
+        print("   testing  allocation loss        ")
         print("-----------------------------------")
         num_models = 2
         task1 = make_pickup_key_dfa()
@@ -284,6 +286,7 @@ class TestModelMethods(unittest.TestCase):
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
+        mu = tf.nn.softmax(motap.tau_params, name="tau")
 
         # storage per model - the issue with using lists is that the don't perform the way they
         #                     are expected to in tf.function. We should look at some optimisations when the algo
@@ -314,7 +317,58 @@ class TestModelMethods(unittest.TestCase):
             values = values_l[i]
             returns = returns_l[i]
             ini_values_i = ini_values[i]
-            loss = motap.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e, c)
+            loss = motap.compute_actor_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e, c)
+            loss_l.append(loss)
+        print(f"loss: {loss_l}")
+        return True
+
+    def test_compute_loss(self):
+        print()
+        print("-----------------------------------")
+        print("           testing loss            ")
+        print("-----------------------------------")
+        num_models = 2
+        task1 = make_pickup_key_dfa()
+        task2 = make_pickup_ball_dfa()
+        prod_dfa = CrossProductDFA(num_tasks=N_TASKS, dfas=[task1, task2])
+        dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
+
+        # Set the configuration of the test
+
+        # Construct the MOTAP environment
+        motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
+        mu = tf.nn.softmax(motap.tau_params, name="tau")
+
+        # storage per model - the issue with using lists is that the don't perform the way they
+        #                     are expected to in tf.function. We should look at some optimisations when the algo
+        #                     is working as expected
+        action_probs_l = []
+        values_l = []
+        rewards_l = []
+        returns_l = []
+        loss_l = []  # the loss storage for an agent
+
+        for i in range(num_models):
+            initial_state = tf.constant(envs[i].reset(), dtype=tf.float32)
+            action_probs, values, rewards = motap.run_episode(initial_state, i, max_steps_per_episode)
+            returns = motap.get_expected_returns(rewards, gamma, N_TASKS, False)
+            print("returns: \n{}".format(returns[0]))
+            print(f"Agent: {i} returns shape: {returns.shape}")
+            print(f"Agent: {i}: values shape: {values.shape}")
+            # Append tensors to respective lists
+            action_probs_l.append(action_probs)
+            values_l.append(values)
+            rewards_l.append(rewards)
+            returns_l.append(returns)
+
+        ini_values = tf.convert_to_tensor([x[0, :] for x in values_l])
+
+        for i in range(num_models):
+            # get loss
+            values = values_l[i]
+            returns = returns_l[i]
+            ini_values_i = ini_values[i]
+            loss = motap.compute_actor_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, i, lam, chi, mu, e, c)
             loss_l.append(loss)
         print(f"loss: {loss_l}")
         return True
@@ -334,7 +388,8 @@ class TestModelMethods(unittest.TestCase):
 
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
-        motap.train_step(optimizer, gamma, max_steps_per_episode, N_TASKS, lam, chi, mu, e, c)
+        mu = tf.nn.softmax(motap.tau_params, name="tau")
+        motap.train_step(optimizer, gamma, max_steps_per_episode, N_TASKS, lam, chi, mu, e, c, alpha)
         return True
 
     def test_train(self):
@@ -362,10 +417,11 @@ class TestModelMethods(unittest.TestCase):
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
         # Keep last episodes reward
         episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
+        mu = tf.nn.softmax(motap.tau_params, name="tau")
 
         with tqdm.trange(max_episodes) as t:
             for tt in t:
-                episode_reward = int(motap.train_step(optimizer, gamma, max_steps_per_episode, N_TASKS, lam, chi, mu, e, c))
+                episode_reward = int(motap.train_step(optimizer, gamma, max_steps_per_episode, N_TASKS, lam, chi, mu, e, c, alpha))
                 episodes_reward.append(episode_reward)
                 running_reward = statistics.mean(episodes_reward)
                 t.set_description(f"Episode {tt}")
@@ -373,7 +429,6 @@ class TestModelMethods(unittest.TestCase):
                 # Show average episode reward every 10 episodes
                 # if tt % 10 == 0:
                 #    print(f'Episode {tt}: average reward: {running_reward}')
-
 
                 if running_reward < reward_threshold and tt >= min_episodes_criterion:
                     break

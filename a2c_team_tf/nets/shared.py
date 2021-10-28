@@ -3,6 +3,7 @@ from tensorflow.keras import layers
 from typing import Tuple, List
 
 
+# Todo we can also try separating out the shared network and experiment with stability
 class ActorCritic(tf.keras.Model):
     """Actor-critic Neural Network"""
 
@@ -22,3 +23,10 @@ class ActorCritic(tf.keras.Model):
     def __call__(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         x = self.common(inputs)
         return self.actor(x), self.critic(x)
+
+
+class AllocatorNetwork(tf.keras.Model):
+    """A network which learns the parameters of the allocator"""
+
+    def __init__(self, m_tasks: int, n_agents: int):
+        pass

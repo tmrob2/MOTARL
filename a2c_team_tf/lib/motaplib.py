@@ -24,6 +24,9 @@ class TfObsEnv:
         self.models: List[tf.keras.Model] = models
         self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
         self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
+        # here we set tau as a matrix of params, but it could be anything for example
+        # params that a neural network could learn
+        self.tau_params = tf.ones([n_agents, m_tasks], dtype=tf.float32)
 
     def env_step(self, action: np.ndarray, env_index: np.int32) \
             -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
@@ -61,7 +64,7 @@ class TfObsEnv:
     def tf_env_step(self, action: tf.Tensor, env_index: tf.int32) -> List[tf.Tensor]:
         """
         tensorflow function for wrapping the environment step function of the env object
-        returns model parameters defined in base.py of a tf.keras.model
+        returns model parameters defined in shared.py of a tf.keras.model
         """
         return tf.numpy_function(self.env_step, [action, env_index], [tf.float32, tf.float32, tf.int32])
 
@@ -95,7 +98,7 @@ class TfObsEnv:
     @staticmethod
     def df(x: tf.Tensor, c: tf.float32) -> tf.Tensor:
       if tf.greater_equal(x, c):
-          tf.print(f"x: {x}, c: {c}")
+          #tf.print(f"x: {x}, c: {c}")
           return 2*(x-c)
       else:
           return tf.convert_to_tensor(0.0)
@@ -109,7 +112,7 @@ class TfObsEnv:
             return tf.convert_to_tensor(0.0)
 
     #@tf.function
-    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.float32, e: tf.float32, c: tf.float32) -> tf.Tensor:
+    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, agent: tf.int32, lam: tf.float32, chi: tf.float32, mu: tf.float32, e: tf.float32, c: tf.float32) -> tf.Tensor:
         """
         :param X: values (non-participant in gradient)
         :param Xi: initial_values (non-participant in gradient)
@@ -120,38 +123,48 @@ class TfObsEnv:
         :return:
         """
         _, y = X.get_shape()
-        # The size of H should be m_agents + 1
-        H = tf.TensorArray(dtype=tf.float32, size=y)
+        # The size of H should be m_tasks + 1 (agent)
+        # H_agent = tf.TensorArray(dtype=tf.float32, size=y)
         f = lam * self.df(Xi[0], c)
-        # print(f"Xi: {Xi[0]}")
         # print(f"f: {f}")
-        H = H.write(0, f)
         # this is the agent rewards, if the agent returns a value greater than c, then f > 0 otherwise f will be 0
         # optimal policies produce returns with either 0 or some minimised value of f.
-        for j in tf.range(start=1, limit=y):
-            # these are the task rewards, task rewards implement a KL div away from the probability threshold
-            # if the probability of completing a task is less than the threshold, dh > 0 otherwise dh == 0
-            h_val = chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu
-            H = H.write(j, h_val)
-        H = H.stack()
+        H_tasks = self.compute_task_H(X, agent, mu, chi, e)
+        H = tf.concat([tf.expand_dims(f, 0), H_tasks], 0)
+        # print(f"H: {H}")
         return H
 
+    def compute_task_H(
+            self,
+            X: tf.Tensor,
+            agent: tf.int32,
+            mu: tf.Tensor,
+            chi: tf.float32,
+            e: tf.float32):
+        H = tf.TensorArray(dtype=tf.float32, size=self.num_tasks)
+        # todo check the dimensions of the h_val calculation as mu has been changed
+        for j in tf.range(start=1, limit=self.num_tasks):
+            h_val = chi * self.dh(tf.math.reduce_sum(mu[agent, j - 1] * X[:, j]), e) * mu[agent, j - 1]
+            H = H.write(j, h_val)
+        return H.stack()
+
     #@tf.function
-    def compute_loss(
+    def compute_actor_loss(
             self,
             action_probs: tf.Tensor,
             values: tf.Tensor,
             returns: tf.Tensor,
             ini_value: tf.Tensor,
             ini_values_i: tf.Tensor,
+            agent: tf.int32,
             lam: tf.float32,
             chi: tf.float32,
-            mu: tf.float32,
+            mu: tf.Tensor,
             e: tf.float32,
             c: tf.float32) -> tf.Tensor:
         """Computes the combined actor-critic loss."""
 
-        H = self.compute_H(ini_value, ini_values_i, lam, chi, mu, e, c)
+        H = self.compute_H(ini_value, ini_values_i, agent, lam, chi, mu, e, c)
         H = tf.expand_dims(H, 0)
         advantage = tf.matmul(returns - values, tf.transpose(H))
         action_log_probs = tf.math.log(action_probs)
@@ -166,6 +179,20 @@ class TfObsEnv:
         # print(f'shape of critic_loss:, {critic_loss.get_shape()}')
 
         return actor_loss + critic_loss
+
+    def compute_allocator_loss(
+            self,
+            X: tf.Tensor,
+            agent: tf.int32,
+            mu: tf.Tensor,
+            chi: tf.float32,
+            e: tf.float32,
+            lr: tf.float32) -> tf.Tensor:
+        H = self.compute_task_H(X, agent, mu, chi, e)
+        #H = tf.expand_dims(H, 0)
+        allocator_loss = lr * tf.math.reduce_sum(X[:, 1:] * H)
+        print(f"X: {X[:, 1:]}, H: {H}")
+        return allocator_loss
 
     def run_episode(
             self,
@@ -230,16 +257,18 @@ class TfObsEnv:
             m_tasks: tf.int32,
             lam: tf.float32,
             chi: tf.float32,
-            mu: tf.float32,
+            mu: tf.Tensor,
             e: tf.float32,
-            c: tf.float32) -> tf.Tensor:
+            c: tf.float32,
+            alpha: tf.float32) -> tf.Tensor:
 
         num_models = len(self.models)
         action_probs_l = []
         values_l = []
         rewards_l = []
         returns_l = []
-        loss_l = []
+        actor_loss_l = []
+        allocator_loss_l = []
         with tf.GradientTape() as tape:
             for i in range(num_models):
                 initial_state = tf.constant(self.tf_reset(i), dtype=tf.float32)
@@ -262,19 +291,21 @@ class TfObsEnv:
                 values = values_l[i]
                 returns = returns_l[i]
                 ini_values_i = ini_values[i]
-                loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e, c)
-                loss_l.append(loss)
-                # print(f'ini_values for model#{i}: {ini_values_i}')
-                # print(f'loss value for model#{i}: {loss}')
-                # print(f'returns for model#{i}: {returns[0]}')
+                actor_loss = self.compute_actor_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, i, lam, chi, mu, e, c)
+                actor_loss_l.append(actor_loss)
+                allocator_loss = self.compute_allocator_loss(ini_values, i, mu, chi, e, alpha)
+                print(f"Shape allocator loss: {allocator_loss.shape}")
+                allocator_loss_l.append(allocator_loss)
 
+        print(f"Allocator loss: {len(allocator_loss_l)}")
         # compute the gradient from the loss vector
-        vars_l = [m.trainable_variables for m in self.models]
-        grads_l = tape.gradient(loss_l, vars_l)
+        xi_l = [m.trainable_variables for m in self.models]
+        grads_xi_l = tape.gradient(actor_loss_l, xi_l)
+        #grads_tau_l = tape.gradient(allocator_loss_l, self.tau_params)
 
         # Apply the gradients to the model's parameters
-        grads_l_f = [x for y in grads_l for x in y]
-        vars_l_f = [x for y in vars_l for x in y]
+        grads_l_f = [x for y in grads_xi_l for x in y]
+        vars_l_f = [x for y in xi_l for x in y]
         optimizer.apply_gradients(zip(grads_l_f, vars_l_f))
         episode_reward_l = [tf.math.reduce_sum(rewards_l[i]) for i in range(num_models)]
         #print(episode_reward_l)
