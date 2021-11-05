@@ -256,8 +256,6 @@ class TestModelMethods(unittest.TestCase):
         prod_dfa = CrossProductDFA(num_tasks=N_TASKS, dfas=[task1, task2])
         dfas = [copy.deepcopy(prod_dfa) for _ in range(num_models)]
 
-        # Set the configuration of the test
-
         # Construct the MOTAP environment
         motap = motaplib.TfObsEnv(envs, models, dfas, N_TASKS, N_AGENTS, render_env, print_rewards)
 

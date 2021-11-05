@@ -48,10 +48,10 @@ class DFA:
         assigned = True if self.complete else False
         return assigned
 
-    def assign_reward(self, state):
+    def assign_reward(self, state, one_off_reward):
         if not self.complete and self.accepting(state):
             self.complete = True
-            return 1.0
+            return one_off_reward
         else:
             return 0.0
 
@@ -83,13 +83,13 @@ class CrossProductDFA:
     def non_reachable(self):
         return [dfa.non_reachable(self.product_state[i]) for (i, dfa) in enumerate(self.dfas)]
 
-    def rewards(self):
+    def rewards(self, one_off_reward):
         """
         :param ii: is the agent index
         """
-        rewards = [dfa.assign_reward(self.product_state[i]) for (i, dfa) in enumerate(self.dfas)]
+        rewards = [dfa.assign_reward(self.product_state[i], one_off_reward) for (i, dfa) in enumerate(self.dfas)]
         for (i, r) in enumerate(rewards):
-            if r == 1.0:
+            if r == one_off_reward:
                 self.completed[i] = True
         return rewards
 

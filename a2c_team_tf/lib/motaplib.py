@@ -3,6 +3,12 @@ import gym
 import tensorflow as tf
 from a2c_team_tf.utils.dfa import CrossProductDFA
 from typing import List, Tuple
+from enum import Enum
+
+class LossObjective(Enum):
+    MAXIMISE = 1,
+    MINIMISE = 2
+
 
 eps = np.finfo(np.float32).eps.item()
 huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
@@ -14,7 +20,8 @@ class TfObsEnv:
             envs: List[gym.Env],
             models: List[tf.keras.Model],
             dfas: List[CrossProductDFA],
-            m_tasks, n_agents, render=False, debug=False):
+            m_tasks, n_agents, render=False, debug=False,
+            obj: LossObjective=LossObjective.MINIMISE):
         self.envs: List[gym.Env] = envs
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = m_tasks
@@ -24,6 +31,7 @@ class TfObsEnv:
         self.models: List[tf.keras.Model] = models
         self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
         self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
+        self.objective = obj
 
     def env_step(self, action: np.ndarray, env_index: np.int32) \
             -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
@@ -33,13 +41,14 @@ class TfObsEnv:
         """
         ii: int = env_index
         state, reward, done, _ = self.envs[ii].step(action)
+        #print(f"reward: {reward}")
         self.dfas[ii].next(self.envs[ii])  # sets the next state of the DFAs
         self.dfas[ii].non_reachable()
         rewards = [reward] + self.dfas[ii].rewards()
 
         if not self.dfas[ii].done():
             done = False
-            rewards[0] = 0.0
+            #rewards[0] = 0.0
 
         if self.dfas[ii].dead() or self.dfas[ii].done():
             done = True
@@ -92,21 +101,34 @@ class TfObsEnv:
                        (tf.math.reduce_std(returns) + eps))
         return returns
 
-    @staticmethod
-    def df(x: tf.Tensor, c: tf.float32) -> tf.Tensor:
-      if tf.greater_equal(x, c):
-          tf.print(f"x: {x}, c: {c}")
-          return 2*(x-c)
-      else:
-          return tf.convert_to_tensor(0.0)
+    def df(self, x: tf.Tensor, c: tf.float32) -> tf.Tensor:
+        if self.objective == LossObjective.MINIMISE:
+            if tf.greater(x, c):
+                tf.print(f"x: {x}, c: {c}")
+                return 2*(x-c)
+            else:
+                return tf.convert_to_tensor(0.0)
+        else:
+            if tf.greater(c, x):
+                tf.print(f"x: {x}, c: {c}")
+                return 2*(x-c)
+            else:
+                return tf.convert_to_tensor(0.0)
 
-    #@tf.function
     @staticmethod
-    def dh(x: tf.float32, e: tf.float32) -> tf.Tensor:
-        if tf.greater_equal(e, x) and tf.greater(x, 0.0):
-            return tf.math.log(x / e) - tf.math.log((1.0 - x) / (1.0 - e))
+    def dh(x: tf.Tensor, e) -> tf.Tensor:
+        if x <= e:
+            return 2 * (x - e)
         else:
             return tf.convert_to_tensor(0.0)
+
+    #@tf.function
+    #@staticmethod
+    #def dh(x: tf.float32, e: tf.float32) -> tf.Tensor:
+    #    if tf.greater_equal(e, x) and tf.greater(x, 0.0):
+    #        return tf.math.log(x / e) - tf.math.log((1.0 - x) / (1.0 - e))
+    #    else:
+    #        return tf.convert_to_tensor(0.0)
 
     #@tf.function
     def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.float32, e: tf.float32, c: tf.float32) -> tf.Tensor:
@@ -121,20 +143,10 @@ class TfObsEnv:
         """
         _, y = X.get_shape()
         # The size of H should be m_agents + 1
-        H = tf.TensorArray(dtype=tf.float32, size=y)
-        f = lam * self.df(Xi[0], c)
-        # print(f"Xi: {Xi[0]}")
-        # print(f"f: {f}")
-        H = H.write(0, f)
-        # this is the agent rewards, if the agent returns a value greater than c, then f > 0 otherwise f will be 0
-        # optimal policies produce returns with either 0 or some minimised value of f.
-        for j in tf.range(start=1, limit=y):
-            # these are the task rewards, task rewards implement a KL div away from the probability threshold
-            # if the probability of completing a task is less than the threshold, dh > 0 otherwise dh == 0
-            h_val = chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu
-            H = H.write(j, h_val)
-        H = H.stack()
-        return H
+        H = [lam * Xi[0]]
+        for j in tf.range(1, y):
+            H.append(chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu)
+        return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     #@tf.function
     def compute_loss(
@@ -152,8 +164,7 @@ class TfObsEnv:
         """Computes the combined actor-critic loss."""
 
         H = self.compute_H(ini_value, ini_values_i, lam, chi, mu, e, c)
-        H = tf.expand_dims(H, 0)
-        advantage = tf.matmul(returns - values, tf.transpose(H))
+        advantage = tf.matmul(returns - values, H)
         action_log_probs = tf.math.log(action_probs)
         actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
 
@@ -216,9 +227,6 @@ class TfObsEnv:
         values = values.stack()
         rewards = rewards.stack()
 
-        ## Reset the task score at the end of each episode.
-        #task.reset()
-
         return action_probs, values, rewards
 
     #@tf.function
@@ -264,9 +272,9 @@ class TfObsEnv:
                 ini_values_i = ini_values[i]
                 loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e, c)
                 loss_l.append(loss)
-                # print(f'ini_values for model#{i}: {ini_values_i}')
-                # print(f'loss value for model#{i}: {loss}')
-                # print(f'returns for model#{i}: {returns[0]}')
+                print(f'ini_values for model#{i}: {ini_values_i}')
+                print(f'loss value for model#{i}: {loss}')
+                print(f'returns for model#{i}: {returns[0]}')
 
         # compute the gradient from the loss vector
         vars_l = [m.trainable_variables for m in self.models]
