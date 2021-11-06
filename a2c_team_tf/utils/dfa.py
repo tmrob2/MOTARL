@@ -44,10 +44,6 @@ class DFA:
         else:
             return False
 
-    def reward_assigned(self):
-        assigned = True if self.complete else False
-        return assigned
-
     def assign_reward(self, state, one_off_reward):
         if not self.complete and self.accepting(state):
             self.complete = True
@@ -58,10 +54,6 @@ class DFA:
     def start(self):
         self.current_state = self.next(self.start_state, None)
         return self.current_state
-
-    def non_reachable(self, state):
-        if state in self.rej:
-            self.dead = True
 
 
 class CrossProductDFA:
@@ -77,12 +69,6 @@ class CrossProductDFA:
     def next(self, env):
         self.product_state = [dfa.next(self.product_state[i], env) for (i, dfa) in enumerate(self.dfas)]
 
-    def accepting(self):
-        return [dfa.accepting(self.product_state[i]) for (i, dfa) in enumerate(self.dfas)]
-
-    def non_reachable(self):
-        return [dfa.non_reachable(self.product_state[i]) for (i, dfa) in enumerate(self.dfas)]
-
     def rewards(self, one_off_reward):
         """
         :param ii: is the agent index
@@ -92,13 +78,6 @@ class CrossProductDFA:
             if r == one_off_reward:
                 self.completed[i] = True
         return rewards
-
-    def dead(self):
-        output = all([dfa.dead for dfa in self.dfas])
-        return output
-
-    def done(self):
-        return all(self.completed)
 
     def reset(self):
         for dfa in self.dfas:
