@@ -12,3 +12,7 @@ line 17 with:
 render_env = False
 print_rewards = False
 ```
+
+[ ] - minigrid wrapped environment still unstable needs some work
+[X] - cartpole multi-agent task allocation works and appears to reasonably learn to solve 
+      a task, and also learns an allocation
