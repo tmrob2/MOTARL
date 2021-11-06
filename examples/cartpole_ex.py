@@ -85,7 +85,7 @@ c = step_rew0
 e = task_prob0 * one_off_reward  # task reward threshold
 
 min_episodes_criterion = 100
-max_episodes = 1000  # 10000
+max_episodes = 10000  # 10000
 max_steps_per_episode = 50  # 1000
 
 # Cartpole-v0 is considered solved if average reward is >= 195 over 100

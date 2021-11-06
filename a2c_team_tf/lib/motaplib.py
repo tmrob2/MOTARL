@@ -105,7 +105,8 @@ class TfObsEnv:
 
     @staticmethod
     def dh(x: tf.Tensor, e) -> tf.Tensor:
-        if tf.less_equal(x, e):
+        # print(f"x: {x}, e: {e}")
+        if tf.less_equal(x, e) and tf.greater(x, 0.0):
             return 2 * (x - e)
         else:
             return tf.convert_to_tensor(0.0)
@@ -119,7 +120,7 @@ class TfObsEnv:
     #        return tf.convert_to_tensor(0.0)
 
     #@tf.function
-    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.Tensor, e: tf.float32, c: tf.float32) -> tf.Tensor:
+    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, agent: tf.int32, lam: tf.float32, chi: tf.float32, mu: tf.Tensor, e: tf.float32, c: tf.float32) -> tf.Tensor:
         """
         :param X: values (non-participant in gradient)
         :param Xi: initial_values (non-participant in gradient)
@@ -130,10 +131,10 @@ class TfObsEnv:
         :return:
         """
         _, y = X.get_shape()
-        ###Try to use tf.TensorArray to implement H but get an error.!!!
         H = [lam * self.df(Xi[0], c)]
         for j in range(1, y):
-            H.append(chi * tf.math.reduce_sum(self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu[:, j - 1]))
+            # print(f"mu_{agent}{j -1 }: {mu[agent, j - 1]}")
+            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu[agent, j - 1])
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
@@ -152,6 +153,7 @@ class TfObsEnv:
             returns: tf.Tensor,
             ini_value: tf.Tensor,
             ini_values_i: tf.Tensor,
+            agent: tf.int32,
             lam: tf.float32,
             chi: tf.float32,
             mu: tf.Tensor,
@@ -159,7 +161,7 @@ class TfObsEnv:
             c: tf.float32) -> tf.Tensor:
         """Computes the combined actor-critic loss."""
 
-        H = self.compute_H(ini_value, ini_values_i, lam, chi, mu, e, c)
+        H = self.compute_H(ini_value, ini_values_i, agent, lam, chi, mu, e, c)
         advantage = tf.matmul(returns - values, H)
         action_log_probs = tf.math.log(action_probs)
         actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
@@ -280,7 +282,7 @@ class TfObsEnv:
                 values = values_l[i]
                 returns = returns_l[i]
                 ini_values_i = ini_values[i]
-                loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, lam, chi, mu, e, c)
+                loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, i, lam, chi, mu, e, c)
                 loss_l.append(loss)
                 # print(f'ini_values for model#{i}: {ini_values_i}')
                 # print(f'loss value for model#{i}: {loss}')
