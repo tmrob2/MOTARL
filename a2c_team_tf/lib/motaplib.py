@@ -139,7 +139,7 @@ class TfObsEnv:
         H = []
         for j in range(1, self.num_tasks + 1):
             H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e))
-        print(f"H: {H}")
+        print(f"alloc H: {H}")
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     #@tf.function

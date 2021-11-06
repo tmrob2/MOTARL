@@ -85,7 +85,7 @@ c = step_rew0
 e = task_prob0 * one_off_reward  # task reward threshold
 
 min_episodes_criterion = 100
-max_episodes = 10000  # 10000
+max_episodes = 1000  # 10000
 max_steps_per_episode = 50  # 1000
 
 # Cartpole-v0 is considered solved if average reward is >= 195 over 100
@@ -123,7 +123,7 @@ with tqdm.trange(max_episodes) as t:
         # compute the gradient from the allocator loss vector
         grads_kappa = tape.gradient(allocator_loss, kappa)
         print(f"grads kappa: {grads_kappa}")
-        processed_grads = [alpha * g for g in grads_kappa]
+        processed_grads = [-alpha * g for g in grads_kappa]
         kappa.assign_add(processed_grads)
         print(f"kappa: {kappa}")
 
