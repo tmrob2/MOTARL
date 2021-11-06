@@ -45,10 +45,6 @@ class TfObsEnv:
         # task.update(state_new[0])
         self.dfas[env_index].next(self.envs[env_index])
 
-        # check if the DFA accepting state set has become non-reachable from the current
-        # DFA state
-        self.dfas[env_index].non_reachable()
-
         # agent-task rewards
         task_rewards = self.dfas[env_index].rewards(self.one_off_reward)
         state_task_rewards = [step_reward] + task_rewards
@@ -136,13 +132,14 @@ class TfObsEnv:
         ###Try to use tf.TensorArray to implement H but get an error.!!!
         H = [lam * self.df(Xi[0], c)]
         for j in range(1, y):
-            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu)
+            H.append(chi * tf.math.reduce_sum(self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu[:, j - 1]))
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
         H = []
-        for j in range(1, self.num_tasks):
+        for j in range(1, self.num_tasks + 1):
             H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e))
+        print(f"H: {H}")
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     #@tf.function
@@ -175,8 +172,11 @@ class TfObsEnv:
 
         return actor_loss + critic_loss
 
-    def compute_alloc_loss(self):
-        pass
+    def compute_alloc_loss(self, ini_values: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
+        H = self.compute_alloc_H(ini_values, chi, mu, e)
+        alloc_loss = tf.math.reduce_sum(H * tf.math.reduce_sum(mu * ini_values))
+        print(f"alloc loss: {alloc_loss}")
+        return alloc_loss
 
     def run_episode(
             self,

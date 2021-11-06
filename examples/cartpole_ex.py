@@ -78,7 +78,7 @@ num_hidden_units = 128
 
 models = [ActorCritic(num_actions, num_hidden_units, num_tasks, name="AC{}".format(i)) for i in range(num_agents)]
 ## Some auxiliary functions for defining the "compute_loss" function.
-mu = 1.0 / num_agents  # fixed even probability of allocating each task to each agent
+# mu = 1.0 / num_agents  # fixed even probability of allocating each task to each agent
 lam = 1.0
 chi = 1.0
 c = step_rew0
@@ -95,21 +95,37 @@ running_reward = 0
 
 ## No discount
 gamma = 1.00
+alpha = 0.01
 
 # Keep last episodes reward
 episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
-render_env, print_rewards = True, False
+render_env, print_rewards = False, False
 motap = motaplib.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
                           num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
 ## Have to use a smaller learning_rate to make the training convergent
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # 0.01
 
+kappa = tf.Variable(np.random.rand(num_tasks * num_agents), dtype=tf.float32)
+print(f"kappa:{kappa}")
+
 with tqdm.trange(max_episodes) as t:
     for i in t:
+        mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+        print(f"mu: \n{mu}")
         # initial_state = tf.constant(env.reset(), dtype=tf.float32)
         # episode_reward = int(train_step(
         #    initial_state, models, optimizer, gamma, max_steps_per_episode))
         episode_reward, ini_values = motap.train_step(optimizer, gamma, max_steps_per_episode, lam, chi, mu, e, c)
+        with tf.GradientTape() as tape:
+            mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+            allocator_loss = motap.compute_alloc_loss(ini_values, chi, mu, e)
+
+        # compute the gradient from the allocator loss vector
+        grads_kappa = tape.gradient(allocator_loss, kappa)
+        print(f"grads kappa: {grads_kappa}")
+        processed_grads = [alpha * g for g in grads_kappa]
+        kappa.assign_add(processed_grads)
+        print(f"kappa: {kappa}")
 
         episode_reward = int(episode_reward)
 
