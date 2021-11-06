@@ -21,7 +21,7 @@ class TfObsEnv:
             models: List[tf.keras.Model],
             dfas: List[CrossProductDFA],
             one_off_reward,
-            num_tasks, num_agents, render=False, debug=False):
+            num_tasks, num_agents, render=False, debug=False, loss_debug=False):
         self.envs: List[gym.Env] = envs
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = num_tasks
@@ -32,6 +32,7 @@ class TfObsEnv:
         self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
         self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
         self.one_off_reward = one_off_reward
+        self.loss_debug = loss_debug
 
     def env_step(self, state: np.ndarray, action: np.ndarray, env_index: np.int32) -> Tuple[
         np.ndarray, np.ndarray, np.ndarray]:
@@ -139,7 +140,8 @@ class TfObsEnv:
         H = []
         for j in range(1, self.num_tasks + 1):
             H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e))
-        print(f"alloc H: {H}")
+        if self.loss_debug:
+            print(f"alloc H: {H}")
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     #@tf.function
@@ -175,7 +177,8 @@ class TfObsEnv:
     def compute_alloc_loss(self, ini_values: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
         H = self.compute_alloc_H(ini_values, chi, mu, e)
         alloc_loss = tf.math.reduce_sum(H * tf.math.reduce_sum(mu * ini_values))
-        print(f"alloc loss: {alloc_loss}")
+        if self.loss_debug:
+            print(f"alloc loss: {alloc_loss}")
         return alloc_loss
 
     def run_episode(

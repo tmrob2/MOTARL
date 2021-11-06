@@ -106,12 +106,11 @@ motap = motaplib.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=on
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # 0.01
 
 kappa = tf.Variable(np.random.rand(num_tasks * num_agents), dtype=tf.float32)
-print(f"kappa:{kappa}")
+# print(f"kappa:{kappa}")
 
 with tqdm.trange(max_episodes) as t:
     for i in t:
         mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-        print(f"mu: \n{mu}")
         # initial_state = tf.constant(env.reset(), dtype=tf.float32)
         # episode_reward = int(train_step(
         #    initial_state, models, optimizer, gamma, max_steps_per_episode))
@@ -122,10 +121,10 @@ with tqdm.trange(max_episodes) as t:
 
         # compute the gradient from the allocator loss vector
         grads_kappa = tape.gradient(allocator_loss, kappa)
-        print(f"grads kappa: {grads_kappa}")
+        # print(f"grads kappa: {grads_kappa}")
         processed_grads = [-alpha * g for g in grads_kappa]
         kappa.assign_add(processed_grads)
-        print(f"kappa: {kappa}")
+        # print(f"kappa: {kappa}")
 
         episode_reward = int(episode_reward)
 
@@ -136,11 +135,11 @@ with tqdm.trange(max_episodes) as t:
         t.set_postfix(
             episode_reward=episode_reward, running_reward=running_reward)
 
-        # Show average episode reward every 10 episodes
+        # Show the learned values, and learned allocation matrix every 20 steps
         if i % 20 == 0:
             for k in range(num_agents):
                 print(f'values at the initial state for model#{k}: {ini_values[k]}')
-                # pass # print(f'Episode {i}: average reward: {avg_reward}')
+            print(f"allocation matrix mu: \n{mu}")
 
         if running_reward > reward_threshold and i >= min_episodes_criterion:
             break
