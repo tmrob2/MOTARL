@@ -122,7 +122,7 @@ class TfObsEnv:
     #        return tf.convert_to_tensor(0.0)
 
     #@tf.function
-    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.float32, e: tf.float32, c: tf.float32) -> tf.Tensor:
+    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, lam: tf.float32, chi: tf.float32, mu: tf.Tensor, e: tf.float32, c: tf.float32) -> tf.Tensor:
         """
         :param X: values (non-participant in gradient)
         :param Xi: initial_values (non-participant in gradient)
@@ -136,7 +136,13 @@ class TfObsEnv:
         ###Try to use tf.TensorArray to implement H but get an error.!!!
         H = [lam * self.df(Xi[0], c)]
         for j in range(1, y):
-            H.append(chi * self.dh(tf.math.reduce_sum(mu * X[:, j]), e) * mu)
+            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu)
+        return tf.expand_dims(tf.convert_to_tensor(H), 1)
+
+    def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
+        H = []
+        for j in range(1, self.num_tasks):
+            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e))
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     #@tf.function
@@ -149,7 +155,7 @@ class TfObsEnv:
             ini_values_i: tf.Tensor,
             lam: tf.float32,
             chi: tf.float32,
-            mu: tf.float32,
+            mu: tf.Tensor,
             e: tf.float32,
             c: tf.float32) -> tf.Tensor:
         """Computes the combined actor-critic loss."""
@@ -168,6 +174,9 @@ class TfObsEnv:
         # print(f'shape of critic_loss:, {critic_loss.get_shape()}')
 
         return actor_loss + critic_loss
+
+    def compute_alloc_loss(self):
+        pass
 
     def run_episode(
             self,
@@ -233,7 +242,7 @@ class TfObsEnv:
             max_steps_per_episode: tf.int32,
             lam: tf.float32,
             chi: tf.float32,
-            mu: tf.float32,
+            mu: tf.Tensor,
             e: tf.float32,
             c: tf.float32) -> [tf.Tensor, tf.Tensor]:
 
