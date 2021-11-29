@@ -151,10 +151,7 @@ of the test.
 
 
 class TestModelMethods(unittest.TestCase):
-    # implement a test for converting training data to correct tensor shapes
-    # two environment step test, and extract v_pi,ini
-    def test_env_goal(self):
-
+    pass
 
 
 if __name__ == '__main__':

@@ -16,7 +16,9 @@ from abc import ABC
 class MoveToPos(DFAStates, ABC):
     def __init__(self):
         self.init = "I"
+        self.just_finish = "J"
         self.finish = "F"
+        self.failed = "N"
 
 
 def get_reached(env: gym.Env):
@@ -85,7 +87,7 @@ c = step_rew0
 e = task_prob0 * one_off_reward  # task reward threshold
 
 min_episodes_criterion = 100
-max_episodes = 10000  # 10000
+max_episodes = 1000  # 10000
 max_steps_per_episode = 50  # 1000
 
 # Cartpole-v0 is considered solved if average reward is >= 195 over 100
@@ -95,7 +97,8 @@ running_reward = 0
 
 ## No discount
 gamma = 1.00
-alpha = 0.01
+alpha1 = 0.001
+alpha2 = 0.001
 
 # Keep last episodes reward
 episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
@@ -103,7 +106,7 @@ render_env, print_rewards = False, False
 motap = motaplib.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
                           num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
 ## Have to use a smaller learning_rate to make the training convergent
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # 0.01
+optimizer = tf.keras.optimizers.Adam(learning_rate=alpha1)  # 0.01
 
 kappa = tf.Variable(np.random.rand(num_tasks * num_agents), dtype=tf.float32)
 # print(f"kappa:{kappa}")
@@ -122,7 +125,7 @@ with tqdm.trange(max_episodes) as t:
         # compute the gradient from the allocator loss vector
         grads_kappa = tape.gradient(allocator_loss, kappa)
         # print(f"grads kappa: {grads_kappa}")
-        processed_grads = [-alpha * g for g in grads_kappa]
+        processed_grads = [-alpha2 * g for g in grads_kappa]
         kappa.assign_add(processed_grads)
         # print(f"kappa: {kappa}")
 

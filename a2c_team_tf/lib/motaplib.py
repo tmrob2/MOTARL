@@ -5,24 +5,18 @@ from a2c_team_tf.utils.dfa import CrossProductDFA
 from typing import List, Tuple
 from enum import Enum
 
-class LossObjective(Enum):
-    MAXIMISE = 1,
-    MINIMISE = 2
-
-
 eps = np.finfo(np.float32).eps.item()
 huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
-
 
 class TfObsEnv:
     def __init__(
             self,
-            envs: List[gym.Env],
+            env,
             models: List[tf.keras.Model],
             dfas: List[CrossProductDFA],
             one_off_reward,
             num_tasks, num_agents, render=False, debug=False, loss_debug=False):
-        self.envs: List[gym.Env] = envs
+        self.env = env
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = num_tasks
         self.num_agents = num_agents
@@ -34,20 +28,20 @@ class TfObsEnv:
         self.one_off_reward = one_off_reward
         self.loss_debug = loss_debug
 
-    def env_step(self, state: np.ndarray, action: np.ndarray, env_index: np.int32) -> Tuple[
+    def env_step(self, state: np.ndarray, action: np.ndarray, agent: np.int32) -> Tuple[
         np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward and done flag given an action."""
 
-        state_new, step_reward, done, _ = self.envs[env_index].step(action)
+        state_new, step_reward, done, _ = self.env.step(action)
 
         ## Get a one-off reward when reaching the position threshold for the first time.
 
         # update the task xDFA
         # task.update(state_new[0])
-        self.dfas[env_index].next(self.envs[env_index])
+        self.dfas[agent].next(self.env)
 
         # agent-task rewards
-        task_rewards = self.dfas[env_index].rewards(self.one_off_reward)
+        task_rewards = self.dfas[agent].rewards(self.one_off_reward)
         state_task_rewards = [step_reward] + task_rewards
 
         return (state.astype(np.float32),
@@ -55,20 +49,20 @@ class TfObsEnv:
                 np.array(state_task_rewards, np.float32),
                 np.array(done, np.int32))
 
-    def env_reset(self, env_index):
-        state = self.envs[env_index].reset()
-        self.dfas[env_index].reset()
+    def env_reset(self, agent):
+        state = self.env.reset()
+        self.dfas[agent].reset()
         return state
 
-    def tf_reset(self, env_index: tf.int32):
-        return tf.numpy_function(self.env_reset, [env_index], [tf.float32])
+    def tf_reset(self, agent: tf.int32):
+        return tf.numpy_function(self.env_reset, [agent], [tf.float32])
 
-    def tf_env_step(self, state: tf.Tensor, action: tf.Tensor, env_index: tf.int32) -> List[tf.Tensor]:
+    def tf_env_step(self, state: tf.Tensor, action: tf.Tensor, agent: tf.int32) -> List[tf.Tensor]:
         """
         tensorflow function for wrapping the environment step function of the env object
         returns model parameters defined in base.py of a tf.keras.model
         """
-        return tf.numpy_function(self.env_step, [state, action, env_index], [tf.float32, tf.float32, tf.int32])
+        return tf.numpy_function(self.env_step, [state, action, agent], [tf.float32, tf.float32, tf.int32])
 
     def get_expected_returns(
             self,
@@ -215,7 +209,7 @@ class TfObsEnv:
 
             # Apply action to the environment to get next state and reward
             state, reward, done = self.tf_env_step(state, action, env_index)
-            #reward = tf.squeeze(reward)
+            # reward = tf.squeeze(reward)
 
             state.set_shape(initial_state_shape)
             # print(f'state: {state}')
@@ -227,7 +221,7 @@ class TfObsEnv:
                 break
 
             if self.render:
-                self.envs[env_index].render('human')
+                self.env.render('human')
 
         action_probs = action_probs.stack()
         values = values.stack()
@@ -259,7 +253,7 @@ class TfObsEnv:
 
         with tf.GradientTape() as tape:
             for i in range(num_models):
-                initial_state = tf.constant(self.envs[i].reset(), dtype=tf.float32)
+                initial_state = tf.constant(self.env.reset(), dtype=tf.float32)
 
                 # Run an episode
                 action_probs, values, rewards = self.run_episode(
@@ -297,7 +291,6 @@ class TfObsEnv:
         vars_l_f = [x for y in vars_l for x in y]
         optimizer.apply_gradients(zip(grads_l_f, vars_l_f))
         episode_reward_l = [tf.math.reduce_sum(rewards_l[i]) for i in range(num_models)]
-        #print(episode_reward_l)
 
         return episode_reward_l[0], ini_values
 
