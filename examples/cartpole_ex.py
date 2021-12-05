@@ -1,6 +1,5 @@
 import collections
 import copy
-
 import gym
 import numpy as np
 import statistics
@@ -8,7 +7,7 @@ import tensorflow as tf
 import tqdm
 from a2c_team_tf.utils.dfa import *
 from a2c_team_tf.nets.base import ActorCritic
-from a2c_team_tf.lib import motaplib
+from a2c_team_tf.lib import lib_mult_env
 from typing import Any, List, Sequence, Tuple
 from abc import ABC
 
@@ -103,7 +102,7 @@ alpha2 = 0.001
 # Keep last episodes reward
 episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
 render_env, print_rewards = False, False
-motap = motaplib.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
+motap = lib_mult_env.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
                           num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
 ## Have to use a smaller learning_rate to make the training convergent
 optimizer = tf.keras.optimizers.Adam(learning_rate=alpha1)  # 0.01

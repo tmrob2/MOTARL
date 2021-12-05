@@ -4,8 +4,8 @@ import collections
 from a2c_team_tf.utils.dfa import *
 from abc import ABC
 from a2c_team_tf.nets.base import ActorCritic
-from a2c_team_tf.lib import motaplib
-from a2c_team_tf.lib.motaplib import LossObjective
+from a2c_team_tf.lib import lib_mult_env
+from a2c_team_tf.lib.lib_mult_env import LossObjective
 import gym
 import numpy as np
 import statistics

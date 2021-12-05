@@ -11,12 +11,12 @@ huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 class TfObsEnv:
     def __init__(
             self,
-            env,
+            envs,
             models: List[tf.keras.Model],
             dfas: List[CrossProductDFA],
             one_off_reward,
             num_tasks, num_agents, render=False, debug=False, loss_debug=False):
-        self.env = env
+        self.envs = envs
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = num_tasks
         self.num_agents = num_agents
@@ -32,13 +32,13 @@ class TfObsEnv:
         np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward and done flag given an action."""
 
-        state_new, step_reward, done, _ = self.env.step(action)
+        state_new, step_reward, done, _ = self.envs[agent].step(action)
 
         ## Get a one-off reward when reaching the position threshold for the first time.
 
         # update the task xDFA
         # task.update(state_new[0])
-        self.dfas[agent].next(self.env)
+        self.dfas[agent].next(self.envs[agent])
 
         # agent-task rewards
         task_rewards = self.dfas[agent].rewards(self.one_off_reward)
@@ -50,7 +50,7 @@ class TfObsEnv:
                 np.array(done, np.int32))
 
     def env_reset(self, agent):
-        state = self.env.reset()
+        state = self.envs[agent].reset()
         self.dfas[agent].reset()
         return state
 
@@ -253,7 +253,7 @@ class TfObsEnv:
 
         with tf.GradientTape() as tape:
             for i in range(num_models):
-                initial_state = tf.constant(self.env.reset(), dtype=tf.float32)
+                initial_state = tf.constant(self.envs[i].reset(), dtype=tf.float32)
 
                 # Run an episode
                 action_probs, values, rewards = self.run_episode(

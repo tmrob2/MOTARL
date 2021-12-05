@@ -13,7 +13,6 @@ def convert_to_flat_and_full(env):
 
 
 class ObjRoom(MiniGridEnv):
-
     def __init__(
             self,
             size=4,

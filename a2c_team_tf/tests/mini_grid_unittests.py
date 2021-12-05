@@ -4,7 +4,7 @@ import unittest
 from a2c_team_tf.nets.base import ActorCritic
 import tensorflow as tf
 import tqdm
-from a2c_team_tf.lib import motaplib
+from a2c_team_tf.lib import lib_mult_env
 from gym_minigrid.minigrid import *
 from gym.envs.registration import register
 from a2c_team_tf.utils.dfa import DFA, DFAStates, CrossProductDFA

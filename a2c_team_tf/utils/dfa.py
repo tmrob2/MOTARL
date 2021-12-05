@@ -25,10 +25,10 @@ class DFA:
     def set_start(self, name):
         self.start_state = name.upper()
 
-    def next(self, state, data):
+    def next(self, state, data, agent):
         if state is not None:
             f = self.handlers[state.upper()]
-            new_state = f(data)
+            new_state = f(data, agent)
             return new_state
         else:
             return self.current_state
@@ -51,14 +51,15 @@ class DFA:
         else:
             return 0.0
 
-    def start(self):
-        self.current_state = self.next(self.start_state, None)
+    """def start(self):
+        self.current_state = self.next(self.start_state, None, )
         return self.current_state
-
+    """
 
 class CrossProductDFA:
-    def __init__(self, num_tasks, dfas: List[DFA]):
+    def __init__(self, num_tasks, dfas: List[DFA], agent: int):
         self.dfas = dfas
+        self.agent = agent
         self.product_state = self.start()
         self.num_tasks = num_tasks
         self.completed = [False] * self.num_tasks
@@ -67,7 +68,7 @@ class CrossProductDFA:
         return [dfa.start_state for dfa in self.dfas]
 
     def next(self, env):
-        self.product_state = [dfa.next(self.product_state[i], env) for (i, dfa) in enumerate(self.dfas)]
+        self.product_state = [dfa.next(self.product_state[i], env, self.agent) for (i, dfa) in enumerate(self.dfas)]
 
     def rewards(self, one_off_reward):
         """
