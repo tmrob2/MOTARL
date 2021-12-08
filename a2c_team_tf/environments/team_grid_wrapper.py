@@ -1,4 +1,6 @@
 from collections import defaultdict
+
+import teamgrid.minigrid
 from teamgrid.minigrid import *
 
 class Point():
@@ -59,6 +61,8 @@ class TestEnv(MiniGridEnv):
             if actions[agent_idx] == self.actions.forward:
                 if fwd_cell is None or fwd_cell.can_overlap():
                     conflicting_positions[agent_idx] = Point(fwd_pos[0], fwd_pos[1])
+                elif fwd_cell.type == 'wall':
+                    rewards[agent_idx] += 10
             elif actions[agent_idx] == self.actions.pickup:
                 if fwd_cell and fwd_cell.can_pickup():
                     if agent.carrying is None:
@@ -77,21 +81,23 @@ class TestEnv(MiniGridEnv):
             # v will be a list of agents that collided with each other
             # if v: print(f"colliding agents: {v}")
             for agent in v:
-                rewards[agent] -= self.penalty
+                rewards[agent] += self.penalty
                 info['collisions'].append(agent)
         for k, v in list(drop_violations):
             # if v: print(f"conflicting drops: {v}")
             for agent in v:
-                rewards[agent] -= self.penalty
+                rewards[agent] += self.penalty
                 info['drop_violations'].append(agent)
         for k,v in list(pickup_violations):
             # if v: print(f"conflicting pickups")
             for agent in v:
-                rewards[agent] -= self.penalty
+                rewards[agent] += self.penalty
                 info['pickup_violations'].append(agent)
-        observation, step_rewards, done, _ = MiniGridEnv.step(self, actions)
-        rewards = [rewards[idx] - r_ for idx, r_ in enumerate(step_rewards)]
-        return observation, rewards, done, info
+        # We assume in this test environment that there are no natural end points
+        # and there are no goals so done is always true
+        observation, step_rewards, _, _ = MiniGridEnv.step(self, actions)
+        rewards = [rewards[idx] + r_ for idx, r_ in enumerate(step_rewards)]
+        return observation, rewards, True, info
 
 
 
