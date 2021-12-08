@@ -1,5 +1,6 @@
 # http://www.wang.works/portfolio/code/Reinforcement-Learning-Policy-Gradient-Methods.html
 # https://github.com/lcswillems/rl-starter-files/blob/master/scripts/train.py
+# https://github.com/lcswillems/torch-ac/blob/master/torch_ac/algos/a2c.py
 
 # TODO the plan here is to build a minimal working case on the teamgrid environment
 #  first using REINFORCE and then upgrading to A2C
