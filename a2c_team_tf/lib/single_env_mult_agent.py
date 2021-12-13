@@ -220,6 +220,7 @@ class MAS:
                 values_t.append(tf.squeeze(values_))
                 # log_prob_p = tf.math.log(action_probs_t[0, action_])
                 probs_t_agent.append(action_probs_t[0, action])
+
             state_, reward, done = self.tf_env_step(state, actions)
             state = state_
             state.set_shape(initial_state_shape)

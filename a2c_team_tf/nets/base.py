@@ -13,7 +13,6 @@ class ActorCritic(tf.keras.Model):
         :param name
         """
         super().__init__()
-
         self.common = layers.Dense(hidden_units, activation="relu")
         self.actor = layers.Dense(n_actions)
         self.critic = layers.Dense(num_tasks + 1)  # tasks + the agent
@@ -22,3 +21,35 @@ class ActorCritic(tf.keras.Model):
     def __call__(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         x = self.common(inputs)
         return self.actor(x), self.critic(x)
+
+
+class Actor(tf.keras.Model):
+    def __init__(self, num_actions):
+        super().__init__()
+        self.fc1 = tf.keras.layers.Dense(32, activation='tanh')
+        self.fc2 = tf.keras.layers.Dense(32, activation='tanh')
+        # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
+        self.a = tf.keras.layers.Dense(num_actions, activation=None)
+
+    def call(self, input):
+        x = self.fc1(input)
+        x = self.fc2(x)
+        # x = self.fc3(x)
+        x = self.a(x)
+        return x
+
+
+class Critic(tf.keras.Model):
+    def __init__(self, num_tasks=0):
+        super().__init__()
+        self.fc1 = tf.keras.layers.Dense(32, activation='tanh')
+        self.fc2 = tf.keras.layers.Dense(32, activation='tanh')
+        # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
+        self.c = tf.keras.layers.Dense(num_tasks + 1, activation=None)
+
+    def call(self, input):
+        x = self.fc1(input)
+        x = self.fc2(x)
+        # x = self.fc3(x)
+        x = self.c(x)
+        return x

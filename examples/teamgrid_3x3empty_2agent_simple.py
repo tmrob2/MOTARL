@@ -1,6 +1,6 @@
 import gym
 from gym.envs.registration import register
-from a2c_team_tf.environments.team_grid_wrapper import TestEnv
+from a2c_team_tf.envs.team_grid_wrapper import TestEnv
 import tensorflow as tf
 from a2c_team_tf.lib.single_env_mult_agent import MAS
 from a2c_team_tf.nets.base import ActorCritic
@@ -33,7 +33,7 @@ c = tf.constant([step_rew0] * num_agents, dtype=tf.float32)
 # Register the teamgrid environment
 register(
     id="empty-room-5x5-v0",
-    entry_point='a2c_team_tf.environments.team_grid_wrapper:TestEnv',
+    entry_point='a2c_team_tf.envs.team_grid_wrapper:TestEnv',
     max_episode_steps=max_episode_steps
 )
 
