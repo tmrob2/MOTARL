@@ -2,6 +2,7 @@ import gym_minigrid.minigrid
 import numpy as np
 from typing import Tuple, List
 import tensorflow as tf
+from a2c_team_tf.utils.dfa import DFA
 
 
 class Agent:
@@ -25,18 +26,46 @@ class Agent:
         self.c_opt = tf.keras.optimizers.Adam(learning_rate=self.clr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 
+    def random_policy(self, initial_state, max_steps):
+        """Method that is useful for checking DFAs, generate a random policy
+        to move around the environment and take random actions"""
+        state = initial_state
+        initial_state_shape = initial_state.shape
+        cached_dfa_state = None
+        for _ in tf.range(max_steps):
+            self.env.render('human')
+            state = tf.expand_dims(state, 0)
+            # Run the model to get an action probability distribution
+            action_logits_t = self.actor(state)
+            action = tf.random.categorical(action_logits_t, 1)[0, 0]
+            # Apply the action to the environment to get the next state and reward
+            state, reward, done = self.tf_env_step2(action)
+            if self.dfa.product_state != cached_dfa_state or done:
+                print(f"DFA state: {self.dfa.product_state}")
+                print(f"DFA complete: {self.dfa.done()}")
+                print(f"Reward: {reward}")
+                cached_dfa_state = self.dfa.product_state
+            state.set_shape(initial_state_shape)
+            if tf.cast(done, tf.bool):
+                break
+
     def env_step2(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward, done flag given an action"""
         state, reward, done, info = self.env.step(action)
         # where we define the DFA steps
         self.dfa.next(self.env)
         task_rewards = self.dfa.rewards(self.one_off_reward)
+        agent_reward = 0
+        for dfa in self.dfa.dfas:
+            if dfa.progress_flag == DFA.Progress.JUST_FINISHED:
+                agent_reward += 1 / self.num_tasks * (1 - 0.9 * self.env.step_count / self.env.max_steps)
+                # print(f"agent reward: {agent_reward}")
         if self.dfa.done():
             # Assign the agent reward
-            agent_reward = 1 - 0.9 * self.env.step_count / self.env.max_steps
+            # agent_reward = 1 - 0.9 * self.env.step_count / self.env.max_steps + reward
             done = True
         else:
-            agent_reward = 0.0
+            # agent_reward = reward
             done = False
         rewards_ = np.array([agent_reward] + task_rewards)
         state_ = np.append(state, np.array(self.dfa.progress))

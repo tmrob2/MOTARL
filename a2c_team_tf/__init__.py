@@ -1,26 +1,31 @@
 from gym.envs.registration import register
 
 register(
-    id='Empty-5x5-v0',
-    entry_point='a2c_team_tf.envs.minigrid_wrapper:EmptyEnv5x5'
-)
-
-register(
-    id='Empty-S-Bonus-5x5-v0',
-    entry_point='a2c_team_tf.envs.minigrid_wrapper:EmptyEnv5x5StateBonus'
-)
-
-register(
     id='Empty-multi-v0',
-    entry_point='a2c_team_tf.envs.minigrid_multitask_wrapper:EmptyMultiTask'
+    entry_point='a2c_team_tf.envs.minigrid_empty_mult:EmptyMultiTask'
 )
 
 register(
     id='Empty-multi-4x4-v0',
-    entry_point='a2c_team_tf.envs.minigrid_multitask_wrapper:EmptyMultiEnv4x4'
+    entry_point='a2c_team_tf.envs.minigrid_empty_mult:EmptyMultiEnv4x4'
 )
 
 register(
     id='Empty-multi-5x5-v0',
-    entry_point='a2c_team_tf.envs.minigrid_multitask_wrapper:EmptyMultiEnv5x5'
+    entry_point='a2c_team_tf.envs.minigrid_empty_mult:EmptyMultiEnv5x5'
+)
+
+register(
+    id='Mult-obj-5x5-v0',
+    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObjNoGoal5x5'
+)
+
+register(
+    id='Mult-obj-4x4-v0',
+    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObjNoGoal4x4'
+)
+
+register(
+    id='Mult-obj-4x4-bonus-v0',
+    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObj4x4ActBonus'
 )

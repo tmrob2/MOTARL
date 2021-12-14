@@ -1,13 +1,12 @@
-# thoughts: we can engineer the reward further by constructing a reward function
-# rewarding steps in multitask completion, i.e. if there are two tasks then the
-# reward function looks like 0.5 - 0.9 * steps / (max_steps / 2). This is a one off
-# reward for completing one task and two task completion will obviously be
-# 1 - 0.9 * steps / max_steps, i.e. a reward of one for accomplishing both tasks -
-# a penalty for the number of steps taken to get here.
+"""
+This is an example of a single agent environment (minigrid) where the tasks are
+presented to an agent in the form of a DFA. There is only one task, to find the
+goal square. This example is meant to serve as the most basic DFA based environment
+to demonstrate that the loss function in our paper does allow, and achieve learning.
+"""
 
 import collections
 import copy
-import statistics
 import numpy as np
 import tensorflow as tf
 import gym
@@ -81,6 +80,6 @@ with tqdm.trange(max_episodes) as t:
         if running_reward[0] > reward_threshold and i >= min_episode_criterion:
             break
 # Save the model(s)
-tf.saved_model.save(agent.actor, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/actor_mult_task_model")
-tf.saved_model.save(agent.critic, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/critic_multi_task_model")
+tf.saved_model.save(agent.actor, "/saved_models/actor_mult_task_model")
+tf.saved_model.save(agent.critic, "/saved_models/critic_multi_task_model")
 
