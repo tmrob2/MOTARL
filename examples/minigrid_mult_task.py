@@ -21,27 +21,24 @@ from a2c_team_tf.lib.tf2_a2c_base import Agent
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.minigrid_fetch_mult import MultObjNoGoal
+from a2c_team_tf.utils.parallel_envs import ParallelEnv
 
 
 env = gym.make('Mult-obj-4x4-v0')
 seed = 44
 env.seed(seed)
 env.reset()
-max_steps_per_episode = 50
+max_steps_per_episode = 75
 env = obs_wrapper.FlatObsWrapper(env, max_steps_per_episode)
 np.random.seed(seed)
 tf.random.set_seed(seed)
-min_episode_criterion = 50
-max_episodes = 50000
-
+min_episode_criterion = 100
+max_episodes = 80000
 num_tasks = 2
-
-reward_threshold = 0.7
+reward_threshold = 0.95
 running_reward = 0
+num_procs = 20
 
-episodes_reward: collections.deque = collections.deque(maxlen=min_episode_criterion)
-actor = Actor(env.action_space.n)
-critic = Critic(num_tasks=num_tasks)
 # construct a DFA which says get to the goal square\
 class PickupObj(DFAStates, ABC):
     def __init__(self):
@@ -84,12 +81,15 @@ def make_pickup_key_dfa():
     return dfa
 
 
+episodes_reward: collections.deque = collections.deque(maxlen=min_episode_criterion)
+actor = Actor(env.action_space.n, recurrence=True)
+critic = Critic(num_tasks=num_tasks, recurrence=True)
 ball = make_pickup_ball_dfa()
 key = make_pickup_key_dfa()
 xdfa = CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(obj) for obj in [key, ball]], agent=0)
 e, c, mu, chi, lam = 0.8, 0.85, 1.0, 1.0, 1.0
 agent = Agent(env, actor, critic, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
-              e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, alr=1e-4, clr=1e-4)
+              e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, alr=1e-4, clr=1e-4, recurrent=True)
 #############################################################################
 #  DFA TEST
 #############################################################################
@@ -101,23 +101,27 @@ if run_dfa_test:
        initial_state = agent.tf_reset()
        agent.random_policy(initial_state, 1000)
 
+envs = []
+for i in range(num_procs):
+    envs.append()
+
 #############################################################################
 # TRAIN AGENT SCRIPT
 #############################################################################
-with tqdm.trange(max_episodes) as t:
-    for i in t:
-        initial_state = agent.tf_reset()
-        episode_reward = agent.train(initial_state, max_steps_per_episode)
-        # print(f"episode reward: {episode_reward.numpy()}")
-        episodes_reward.append(episode_reward.numpy())
-        running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
-        # print(f"episodes reward: {episodes_reward}")
-
-        t.set_description(f"Episode: {i}")
-        t.set_postfix(episode_reward=np.around(episode_reward.numpy(), decimals=2), running_reward=running_reward)
-
-        #if running_reward[0] > reward_threshold and i >= min_episode_criterion:
-        #    break
-# Save the model(s)
-tf.saved_model.save(agent.actor, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/a_4x4_mult_obj_room")
-tf.saved_model.save(agent.critic, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/c_4x4_mult_obj_room")
+# with tqdm.trange(max_episodes) as t:
+#     for i in t:
+#         initial_state = agent.tf_reset()
+#         episode_reward = agent.train(initial_state, max_steps_per_episode)
+#         # print(f"episode reward: {episode_reward.numpy()}")
+#         episodes_reward.append(episode_reward.numpy())
+#         running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
+#         # print(f"episodes reward: {episodes_reward}")
+#
+#         t.set_description(f"Episode: {i}")
+#         t.set_postfix(episode_reward=np.around(episode_reward.numpy(), decimals=2), running_reward=running_reward)
+#
+#         #if running_reward[0] > reward_threshold and i >= min_episode_criterion:
+#         #    break
+# # Save the model(s)
+# tf.saved_model.save(agent.actor, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/a_4x4_mult_obj_room")
+# tf.saved_model.save(agent.critic, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/c_4x4_mult_obj_room")

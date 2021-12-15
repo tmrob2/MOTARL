@@ -24,15 +24,23 @@ class ActorCritic(tf.keras.Model):
 
 
 class Actor(tf.keras.Model):
-    def __init__(self, num_actions):
+    def __init__(self, num_actions, recurrence=False, max_steps=100):
         super().__init__()
-        self.fc1 = tf.keras.layers.Dense(128, activation='tanh')
+        self.recurrence = recurrence
+        if recurrence:
+            self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)
+        self.fc1 = tf.keras.layers.Dense(64, activation='tanh')
         self.fc2 = tf.keras.layers.Dense(64, activation='tanh')
-        self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
+        # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
         self.a = tf.keras.layers.Dense(num_actions, activation=None)
+        self.mask = tf.ones(max_steps, dtype=tf.int32)
 
     def call(self, input):
-        x = self.fc1(input)
+        if self.recurrence:
+            x = self.lstm(input)
+            x = self.fc1(x)
+        else:
+            x = self.fc1(input)
         x = self.fc2(x)
         # x = self.fc3(x)
         x = self.a(x)
@@ -40,15 +48,22 @@ class Actor(tf.keras.Model):
 
 
 class Critic(tf.keras.Model):
-    def __init__(self, num_tasks=0):
+    def __init__(self, num_tasks=0, recurrence=False):
         super().__init__()
-        self.fc1 = tf.keras.layers.Dense(128, activation='tanh')
+        self.recurrence = True
+        if recurrence:
+            self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)
+        self.fc1 = tf.keras.layers.Dense(64, activation='tanh')
         self.fc2 = tf.keras.layers.Dense(64, activation='tanh')
-        self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
+        # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
         self.c = tf.keras.layers.Dense(num_tasks + 1, activation=None)
 
     def call(self, input):
-        x = self.fc1(input)
+        if self.recurrence:
+            x = self.lstm(input)
+            x = self.fc1(x)
+        else:
+            x = self.fc1(input)
         x = self.fc2(x)
         # x = self.fc3(x)
         x = self.c(x)

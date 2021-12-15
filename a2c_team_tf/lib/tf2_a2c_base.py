@@ -9,7 +9,8 @@ class Agent:
     def __init__(self, env, actor: tf.keras.Model, critic: tf.keras.Model,
                  num_tasks, xdfa, one_off_reward,
                  e, c, mu, chi, lam,
-                 gamma=1.0, alr=5e-4, clr=5e-4, entropy_coef=0.001, seed=None):
+                 gamma=1.0, alr=5e-4, clr=5e-4, entropy_coef=0.001,
+                 seed=None, recurrent=True, num_procs=10):
         self.env: gym_minigrid.minigrid.MiniGridEnv = env
         self.actor = actor
         self.critic = critic
@@ -25,6 +26,9 @@ class Agent:
         self.a_opt = tf.keras.optimizers.Adam(learning_rate=self.alr)
         self.c_opt = tf.keras.optimizers.Adam(learning_rate=self.clr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
+        self.num_proc_frames = 10
+        self.recurrent = recurrent
+        self.num_procs =
 
     def random_policy(self, initial_state, max_steps):
         """Method that is useful for checking DFAs, generate a random policy
@@ -97,14 +101,32 @@ class Agent:
         for _ in tf.range(max_steps):
             self.env.render('human')
             state = tf.expand_dims(state, 0)
+            if self.recurrent:
+                state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
             action_logits_t = self.actor(state)
+            if self.recurrent:
+                action_logits_t = tf.squeeze(action_logits_t, axis=0)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             # Apply the action to the environment to get the next state and reward
             state, reward, done = self.tf_env_step2(action)
             state.set_shape(initial_state_shape)
             if tf.cast(done, tf.bool):
                 break
+
+    def collect_experiences(self):
+        """Collects rollouts and computes advantages
+        Runs several environments concurrently, the next actions are computed in a batch
+        for all environments at the same time. The rollouts and the advantages from all
+        environments are concatenated together
+
+        Returns:
+             exps - actions, rewards, advantages as attributes
+             Each attribute has a shape num_frames * num_envs
+             The k-th block contains data from the k-th environment
+        """
+        for i in tf.range(self.num_proc_frames):
+
 
     def run_episode2(self, initial_state: tf.Tensor, max_steps: tf.int32):
         """Runs a single episode to collect the training data"""
@@ -116,12 +138,18 @@ class Agent:
         state = initial_state
         for t in tf.range(max_steps):
             state = tf.expand_dims(state, 0)
+            if self.recurrent:
+                state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
             action_logits_t = self.actor(state)
+            if self.recurrent:
+                action_logits_t = tf.squeeze(action_logits_t, axis=0)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             action_probs_t = tf.nn.softmax(action_logits_t)
             # Store the critic values
             value = self.critic(state)
+            if self.recurrent:
+                value = tf.squeeze(value)
             values = values.write(t, value)
 
             # Store the probabilities of the action chosen
