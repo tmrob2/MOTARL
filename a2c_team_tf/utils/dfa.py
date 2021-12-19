@@ -72,7 +72,6 @@ class CrossProductDFA:
         self.state_space = []
         self.state_numbering = []
         self.statespace_mapping = {}
-        self.compute_state_space()
 
     def start(self):
         return tuple([dfa.start_state for dfa in self.dfas])

@@ -16,7 +16,7 @@ import tensorflow as tf
 import gym
 import tqdm
 from a2c_team_tf.utils import obs_wrapper
-from a2c_team_tf.nets.base import Actor, Critic, ActorCrticLSTM
+from a2c_team_tf.nets.base import Actor, Critic
 from a2c_team_tf.lib.tf2_a2c_base import Agent
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
@@ -27,12 +27,11 @@ from a2c_team_tf.utils.env_utils import make_env
 
 # env = gym.make()
 env_key = 'Mult-obj-4x4-v0'
-seed = 123
-max_steps_per_update = 8
+seed = 44
+max_steps_per_update = 12
 np.random.seed(seed)
 tf.random.set_seed(seed)
-min_episode_criterion = 10
-max_epsiode_steps = 100
+min_episode_criterion = 100
 max_episodes = 80000
 num_tasks = 2
 reward_threshold = 0.95
@@ -86,47 +85,54 @@ def make_pickup_key_dfa():
 #############################################################################
 envs = []
 for i in range(num_procs):
-    envs.append(make_env(env_key=env_key, max_steps_per_episode=max_epsiode_steps, seed=seed + 1000 * i))
+    envs.append(make_env(env_key=env_key, max_steps_per_episode=max_steps_per_update, seed=seed + 1000 * i))
 #############################################################################
 #  Initialise data structures
 #############################################################################
 episodes_reward: collections.deque = collections.deque(maxlen=min_episode_criterion)
-# actor = Actor(envs[0].action_space.n, recurrent=recurrent)
-# critic = Critic(num_tasks=num_tasks, recurrent=recurrent)
-model = ActorCrticLSTM(num_actions=envs[0].action_space.n, num_tasks=num_tasks, recurrent=True)
+actor = Actor(envs[0].action_space.n, recurrent=recurrent)
+critic = Critic(num_tasks=num_tasks, recurrent=recurrent)
 ball = make_pickup_ball_dfa()
 key = make_pickup_key_dfa()
 xdfa = CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(obj) for obj in [key, ball]], agent=0)
 e, c, mu, chi, lam = 0.8, 0.85, 1.0, 1.0, 1.0
-agent = Agent(envs, model, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
+agent = Agent(envs, actor, critic, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
               e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, alr=1e-4, clr=1e-4,
-              num_procs=num_procs, num_frames_per_proc=max_steps_per_update, recurrence=recurrence, min_epsiode_criterion=min_episode_criterion)
+              num_procs=num_procs, num_frames_per_proc=max_steps_per_update, recurrence=recurrence)
 
-#############################################################################
-#  DFA TEST
-#############################################################################
-# construct a random policy to make sure that the DFA is constructed correctly
-run_dfa_test = False
-if run_dfa_test:
-    max_resets = 2
-    for _ in range(max_resets):
-       initial_state = agent.tf_reset()
-       agent.random_policy(initial_state, 1000)
 
-#############################################################################
-# TRAIN AGENT SCRIPT
-#############################################################################
-episodes_reward = collections.deque(maxlen=min_episode_criterion)
-with tqdm.trange(max_episodes) as t:
-    # get the initial state
-    state = agent.tf_reset2()
-    log_reward = tf.zeros([num_procs, num_tasks + 1], dtype=tf.float32)
-    for i in t:
-        state, log_reward, running_reward, aloss, closs = agent.train2(state, log_reward)
-        t.set_description(f"Batch: {i}")
-        for reward in running_reward:
-            episodes_reward.append(reward.numpy())
-        if episodes_reward:
-            episode_reward = episodes_reward[-1]
-            running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
-            t.set_postfix(eps=episode_reward, running_r=running_reward, loss=aloss.numpy() + closs.numpy())
+observations, actions, masks, values, returns, advantages = agent.collect_episode_batches()
+print(f"Shapes => observations: {observations.shape}, actions: {actions.shape}"
+      f"values: {values.shape}, returns: {returns.shape}, "
+      f"masks: {masks.shape}, advantages: {advantages.shape}")
+
+ii = agent.tf_starting_indexes()
+print(f"indices: {ii}")
+loss = 0
+for t in range(recurrence):
+    ix = ii + t
+    sub_batch_obs = tf.gather(observations, indices=ix)
+    print("sub batch of observations: ", sub_batch_obs.shape)
+    # compute loss
+    mask = tf.expand_dims(tf.cast(tf.gather(masks, indices=ix), tf.bool), 1)
+    action_logits_t = agent.actor(sub_batch_obs, mask=mask)
+    sb_advantage = tf.gather(advantages, indices=ix)
+    print(f"Action probs: {action_logits_t.shape}, sb_adv: {sb_advantage.shape}")
+    sb_actions = tf.gather(actions, indices=ix)
+    print("actions: ", sb_actions)
+    action_probs_t = tf.nn.softmax(action_logits_t)
+    z = tf.range(action_probs_t.shape[0])
+    print("action probabilities shape ", action_probs_t.shape, "z shape ", z.shape, z)
+    jj = tf.transpose([z, sb_actions])
+    action_probs = tf.gather_nd(action_probs_t, indices=jj)
+    print("action probs: ", action_probs.shape, "advantages: ", tf.squeeze(sb_advantage).shape)
+    actor_loss = tf.math.reduce_mean(tf.math.log(action_probs) * tf.squeeze(sb_advantage))
+    print("actor loss: ", actor_loss)
+    value = agent.critic(sub_batch_obs, mask=mask)
+    sb_returns = tf.gather(returns, indices=ix)
+    print("value shape: ", tf.squeeze(value).shape, "batch returns shape: ", sb_returns.shape)
+    critic_sb_losses = agent.huber(tf.squeeze(value), sb_returns)
+    print("critic loss shape ", critic_sb_losses.shape, "\ncritic losses ", critic_sb_losses, "\ncritic loss ", tf.nn.compute_average_loss(critic_sb_losses))
+    loss += actor_loss + tf.nn.compute_average_loss(critic_sb_losses)
+loss /= recurrence
+print("loss: ", loss)

@@ -1,2 +1,0 @@
-import gym
-import gym_minigrid

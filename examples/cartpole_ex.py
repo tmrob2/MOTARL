@@ -20,7 +20,7 @@ class MoveToPos(DFAStates, ABC):
         self.failed = "N"
 
 
-def get_reached(env: gym.Env):
+def get_reached(env: gym.Env, _):
     if env is not None:
         if env.env.state[0] > cart_pos:
             return "F"
@@ -39,7 +39,6 @@ def make_move_to_pos_dfa():
     dfa.states = MoveToPos()
     dfa.add_state(dfa.states.init, get_reached)
     dfa.add_state(dfa.states.finish, finished)
-    dfa.start()
     return dfa
 
 
@@ -71,8 +70,7 @@ task = make_move_to_pos_dfa()  # make_move_to_pos_dfa()
 
 num_agents = 2
 num_tasks = 1
-cpdfa1 = CrossProductDFA(num_tasks=num_tasks, dfas=[task])
-dfas = [copy.deepcopy(cpdfa1)] * num_agents
+dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[task], agent=agent) for agent in range(num_agents)]
 
 num_actions = env1.action_space.n  # 2
 num_hidden_units = 128

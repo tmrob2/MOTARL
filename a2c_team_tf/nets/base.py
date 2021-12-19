@@ -24,20 +24,19 @@ class ActorCritic(tf.keras.Model):
 
 
 class Actor(tf.keras.Model):
-    def __init__(self, num_actions, recurrence=False, max_steps=100):
+    def __init__(self, num_actions, recurrent=False):
         super().__init__()
-        self.recurrence = recurrence
-        if recurrence:
-            self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)
+        self.recurrent = recurrent
+        if recurrent:
+            self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64))
         self.fc1 = tf.keras.layers.Dense(64, activation='tanh')
         self.fc2 = tf.keras.layers.Dense(64, activation='tanh')
         # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
         self.a = tf.keras.layers.Dense(num_actions, activation=None)
-        self.mask = tf.ones(max_steps, dtype=tf.int32)
 
-    def call(self, input):
-        if self.recurrence:
-            x = self.lstm(input)
+    def call(self, input, mask=None):
+        if self.recurrent:
+            x = self.lstm(input, mask=mask)
             x = self.fc1(x)
         else:
             x = self.fc1(input)
@@ -48,19 +47,19 @@ class Actor(tf.keras.Model):
 
 
 class Critic(tf.keras.Model):
-    def __init__(self, num_tasks=0, recurrence=False):
+    def __init__(self, num_tasks=0, recurrent=False):
         super().__init__()
-        self.recurrence = True
-        if recurrence:
+        self.recurrent = recurrent
+        if recurrent:
             self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)
         self.fc1 = tf.keras.layers.Dense(64, activation='tanh')
         self.fc2 = tf.keras.layers.Dense(64, activation='tanh')
         # self.fc3 = tf.keras.layers.Dense(32, activation='tanh')
         self.c = tf.keras.layers.Dense(num_tasks + 1, activation=None)
 
-    def call(self, input):
-        if self.recurrence:
-            x = self.lstm(input)
+    def call(self, input, mask=None):
+        if self.recurrent:
+            x = self.lstm(input, mask=mask)
             x = self.fc1(x)
         else:
             x = self.fc1(input)
@@ -68,3 +67,29 @@ class Critic(tf.keras.Model):
         # x = self.fc3(x)
         x = self.c(x)
         return x
+
+class ActorCrticLSTM(tf.keras.Model):
+    def __init__(self, num_actions, num_tasks=0, recurrent=False):
+        self.recurrent = recurrent
+        if recurrent:
+            self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)
+        self.afc1 = tf.keras.layers.Dense(64, activation='tanh')
+        # self.afc2 = tf.keras.layers.Dense(64, activation='tanh')
+        self.a = tf.keras.layers.Dense(num_actions, activation=None)
+
+        self.cfc1 = tf.keras.layers.Dense(64, activation='tanh')
+        # self.cfc2 = tf.keras.layers.Dense(64, activation='tanh')
+        self.c = tf.keras.layers.Dense(num_tasks + 1, activation=None)
+
+    def call(self, input, mask=None):
+        if self.recurrent:
+            x = self.lstm(input, mask=mask)
+        else:
+            x = input
+        a = self.afc1(x)
+        a = self.a(a)
+
+        c = self.cfc1(x)
+        c = self.c(c)
+        return a, c
+

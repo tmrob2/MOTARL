@@ -156,7 +156,9 @@ class TfObsEnv:
         """Computes the combined actor-critic loss."""
 
         H = self.compute_H(ini_value, ini_values_i, agent, lam, chi, mu, e, c)
+        print(f"returns: {returns.shape}, H shape: {H.shape}")
         advantage = tf.matmul(returns - values, H)
+        print(f"advantage shape: {advantage.shape}")
         action_log_probs = tf.math.log(action_probs)
         actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
 
