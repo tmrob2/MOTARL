@@ -22,15 +22,12 @@ class Agent:
             ParallelEnv(envs, [copy.deepcopy(xdfa) for _ in range(num_procs)], one_off_reward, num_tasks, [float(max_eps_steps) for _ in range(num_tasks)], seed)
         if env_key:
             self.renv = make_env(env_key=env_key, max_steps_per_episode=max_eps_steps, seed=seed, apply_flat_wrapper=True)
-        # self.actor = actor
-        # self.critic = critic
         self.model = model
         self.num_tasks = num_tasks
         self.dfa = xdfa
         self.one_off_reward = one_off_reward
         self.e, self.c, self.mu, self.chi, self.lam = e, c, mu, chi, lam
         self.lr = lr
-        #self.clr = clr
         self.gamma = gamma
         self.entropy_coef = entropy_coef
         self.seed = seed
@@ -352,17 +349,19 @@ class Agent:
         # entropy_loss = tf.keras.losses.categorical_crossentropy(action_probs, action_probs)
         return actor_loss  # - self.entropy_coef * entropy_loss
 
-    def update_loss(self, observations, actions, masks, returns, advantages, ii, batch_shape, mask_shape):
-        loss = 0
+    def update_loss(self,
+                    observations: tf.Tensor,
+                    actions: tf.Tensor,
+                    masks: tf.Tensor, returns: tf.Tensor,
+                    advantages: tf.Tensor,
+                    ii: tf.Tensor):
+        loss = tf.constant(0.0, dtype=tf.float32)
         for t in tf.range(self.recurrence):
             ix = ii + t
             # Construct a sub batch of experiences for the timestep t across all of the samples
             sub_batch_obs = tf.gather(observations, indices=ix)
-            #sub_batch_obs.set_shape([40, 1, 50])
-            # print(f"sub batch shape: {sub_batch_obs.shape}, indices: {ix.shape}")
             # Construct the sub batch mask from experiences
             mask = tf.expand_dims(tf.cast(tf.gather(masks, indices=ix), tf.bool), 1)
-            #mask.set_shape([40, 1])
             # Construct the sub batch of advantages and returns from experience samples
             sb_advantage = tf.gather(advantages, indices=ix)
             sb_returns = tf.gather(returns, indices=ix)
@@ -385,34 +384,14 @@ class Agent:
         loss /= self.recurrence
         return loss
 
-    # @tf.function
-    def train(
-            self,
-            initial_state: tf.Tensor,
-            max_steps: tf.int32) -> tf.Tensor:
-        """Runs a model training step"""
-        with tf.GradientTape() as tape:
-            # Runs the model for one epsidoe to collect the training data
-            action_probs, values, rewards = self.run_episode2(initial_state, max_steps)
-            # Calculate the expected returns
-            values = tf.squeeze(values)  # TODO add this while we are only dealing with one agent
-            rewards = tf.squeeze(rewards)  # TODO add this while we are only dealing with one agent
-            returns = self.get_expected_return(rewards)
-            # Convert the training data to appropriate TF shapes
-            # action_probs, values, returns = [tf.expand_dims(x, 1) for x in [action_probs, values, returns]]
-
-            # Calculate the loss function to update the network
-            critic_loss = tf.reduce_sum(self.huber(values, returns))
-            ini_values = tf.convert_to_tensor(values[0])
-            actor_loss = self.compute_actor_loss2(
-                action_probs, values, returns, ini_values, ini_values)
-        grads1 = tape.gradient(actor_loss + critic_loss, self.model.trainable_variables)
-        self.opt.apply_gradients(zip(grads1, self.model.trainable_variables))
-        episode_reward = tf.math.reduce_sum(rewards, 0)
-        return episode_reward
-
-    # @tf.function
-    def train2(self, initial_state: tf.Tensor, log_reward: tf.Tensor):
+    @tf.function
+    def train2(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor):
+        """
+        :param initial_state: The initial states across the sample environments, shape: (samples x features)
+        :param log_reward: A logging helper tensor which captures the current rewards
+            across samples per episode, shape: (samples x (tasks + 1))
+        :param ii: starting indices used in recurrent calculations
+        """
         # We require masks to know which tensor elements the model should ignore
         # We require values and returns for huber loss
         # We require advantages for actor loss
@@ -438,13 +417,11 @@ class Agent:
         returns = tf.convert_to_tensor(returns)
         observations = tf.convert_to_tensor(observations)
         acts = tf.convert_to_tensor(acts)
-        ii = self.tf_starting_indexes()
-        batch_shape = tf.gather(observations, ii).shape
-        mask_shape = tf.expand_dims(tf.cast(tf.gather(masks, indices=ii), tf.bool), 1).shape
+
         with tf.GradientTape() as tape:
-            loss = self.update_loss(observations, acts, masks, returns, advantages, ii, batch_shape, mask_shape)
-            grads1 = tape.gradient(loss, self.model.trainable_variables)
-            self.opt.apply_gradients(zip(grads1, self.model.trainable_variables))
+             loss = self.update_loss(observations, acts, masks, returns, advantages, ii)
+             grads1 = tape.gradient(loss, self.model.trainable_variables)
+             self.opt.apply_gradients(zip(grads1, self.model.trainable_variables))
 
         return state, log_reward, running_rewards, loss
 

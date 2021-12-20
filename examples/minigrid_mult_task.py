@@ -33,7 +33,7 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
 max_epsiode_steps = 50
-max_episodes = 50000
+max_episodes = 10000
 num_tasks = 2
 reward_threshold = 0.95
 running_reward = 0
@@ -138,8 +138,9 @@ with tqdm.trange(max_episodes) as t:
     # get the initial state
     state = agent.tf_reset2()
     log_reward = tf.zeros([num_procs, num_tasks + 1], dtype=tf.float32)
+    indices = agent.tf_starting_indexes()
     for i in t:
-        state, log_reward, running_reward, loss = agent.train2(state, log_reward)
+        state, log_reward, running_reward, loss = agent.train2(state, log_reward, indices)
         t.set_description(f"Batch: {i}")
         for reward in running_reward:
             episodes_reward.append(reward.numpy())
@@ -148,15 +149,15 @@ with tqdm.trange(max_episodes) as t:
             running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
             t.set_postfix(eps=episode_reward, running_r=running_reward, loss=loss.numpy())
 
-        if i % 50 == 0:
+        if i % 200 == 0:
             # render an episode
             r_init_state = agent.render_reset()
             agent.render_episode(r_init_state, max_epsiode_steps)
             # agent.renv.window.close()
         if episodes_reward:
-            if running_reward[0] > 0.85 and i >= min_episode_criterion:
+            if running_reward[0] > 0.92 and i >= min_episode_criterion:
                 break
 
 # Save the model(s)
-tf.saved_model.save(agent.model, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/agent_lstm_4x4")
+# tf.saved_model.save(agent.model, "/home/tmrob2/PycharmProjects/MORLTAP/saved_models/agent_lstm_4x4")
 
