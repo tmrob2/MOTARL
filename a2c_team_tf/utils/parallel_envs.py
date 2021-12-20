@@ -72,8 +72,9 @@ class ParallelEnv(gym.Env):
     def __init__(self, envs: List[gym.Env], dfas: List[CrossProductDFA], one_off_reward, num_tasks, max_steps:List[float]=[], seed=None):
         self.envs = envs
         self.seed = seed
-        self.observation_space = self.envs[0].observation_space
-        self.action_space = self.envs[0].action_space
+        if self.envs:
+            self.observation_space = self.envs[0].observation_space
+            self.action_space = self.envs[0].action_space
         self.dfas: List[CrossProductDFA] = dfas  # A copy of the cross product DFA for each proc
         self.one_off_reward = one_off_reward  # One off reward given on task completion
         self.num_tasks = num_tasks  # The number of tasks to be allocated to the agent

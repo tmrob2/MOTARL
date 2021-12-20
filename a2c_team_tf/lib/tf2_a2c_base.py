@@ -43,16 +43,17 @@ class Agent:
         assert num_frames_per_proc % recurrence == 0
 
     def random_policy(self, initial_state, max_steps):
-        # todo this function needs to be updated to handle the recurrent model
         """Method that is useful for checking DFAs, generate a random policy
         to move around the environment and take random actions"""
         state = initial_state
         initial_state_shape = initial_state.shape
         cached_dfa_state = None
         for _ in tf.range(max_steps):
-            self.env.render('human')
+            self.renv.render('human')
             state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
+            if self.recurrent:
+                state = tf.expand_dims(state, 0)
             action_logits_t, _ = self.model(state)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             # Apply the action to the environment to get the next state and reward
@@ -88,13 +89,8 @@ class Agent:
         self.dfa.next(self.renv)
         task_rewards = self.dfa.rewards(self.one_off_reward)
         agent_reward = 0
-        for dfa in self.dfa.dfas:
-            if dfa.progress_flag == DFA.Progress.JUST_FINISHED:
-                agent_reward += 1 / self.num_tasks * (1 - 0.9 * self.renv.step_count / self.renv.max_steps)
-                # print(f"agent reward: {agent_reward}")
         if self.dfa.done():
             # Assign the agent reward
-            # agent_reward = 1 - 0.9 * self.env.step_count / self.env.max_steps + reward
             done = True
         else:
             # agent_reward = reward

@@ -51,25 +51,22 @@ def make_pickup_key_dfa():
     dfa.add_state(states.carrying, finished)
     return dfa
 
-env: gym.Env = gym.make('Mult-obj-4x4-v0')
-seed = 44
+seed = 123
+env_key = 'Mult-obj-4x4-v0'
 num_tasks = 2
-env.seed(seed)
-env = obs_wrapper.FlatObsWrapper(env, 50)
 np.random.seed(seed)
 tf.random.set_seed(seed)
-actor = tf.saved_model.load('/home/tmrob2/PycharmProjects/MORLTAP/saved_models/a_4x4_mult_obj_room')
-critic = tf.saved_model.load('/home/tmrob2/PycharmProjects/MORLTAP/saved_models/c_4x4_mult_obj_room')
+model = tf.saved_model.load('/home/tmrob2/PycharmProjects/MORLTAP/saved_models/agent_lstm_4x4')
 e, c, mu, chi, lam = 0.8, 0.85, 1.0, 1.0, 1.0
 ball = make_pickup_ball_dfa()
 key = make_pickup_key_dfa()
 xdfa = CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(obj) for obj in [key, ball]], agent=0)
-agent = Agent(env, actor, critic, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
-              e=e, c=c, mu=mu, chi=chi, lam=lam)
-agent.env.render('human')
+agent = Agent(envs=[], model=model, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
+              e=e, c=c, mu=mu, chi=chi, lam=lam, env_key=env_key, seed=seed, recurrence=4)
+
 max_steps = 50
-for episode in range(1):
-    initial_state = agent.tf_reset()
+for episode in range(10):
+    initial_state = agent.render_reset()
     agent.render_episode(initial_state, max_steps)
-    if agent.env.window.closed:
+    if agent.renv.window.closed:
         break
