@@ -1,24 +1,27 @@
 import collections
 import copy
-
 import gym_minigrid.minigrid
+import gym
 import numpy as np
 from typing import Tuple, List
 import tensorflow as tf
 from a2c_team_tf.utils.dfa import DFA
 from a2c_team_tf.utils.parallel_envs import ParallelEnv
+from a2c_team_tf.utils.env_utils import make_env
 
 
 class Agent:
     def __init__(self, envs, model,
                  num_tasks, xdfa, one_off_reward,
                  e, c, mu, chi, lam,
-                 gamma=1.0, alr=5e-4, clr=5e-4, entropy_coef=0.001,
-                 seed=None, num_procs=10, num_frames_per_proc=100, recurrence=1, min_epsiode_criterion=100):
+                 gamma=1.0, lr=1e-4, entropy_coef=0.001,
+                 seed=None, num_procs=10, num_frames_per_proc=100, recurrence=1, max_eps_steps=100, env_key=None):
         self.recurrent = recurrence > 1
         self.recurrence = recurrence
         self.env: ParallelEnv = \
-            ParallelEnv(envs, [copy.deepcopy(xdfa) for _ in range(num_procs)], one_off_reward, num_tasks)
+            ParallelEnv(envs, [copy.deepcopy(xdfa) for _ in range(num_procs)], one_off_reward, num_tasks, [float(max_eps_steps) for _ in range(num_tasks)], seed)
+        if env_key:
+            self.renv = make_env(env_key=env_key, max_steps_per_episode=max_eps_steps, seed=seed, apply_flat_wrapper=True)
         # self.actor = actor
         # self.critic = critic
         self.model = model
@@ -26,18 +29,16 @@ class Agent:
         self.dfa = xdfa
         self.one_off_reward = one_off_reward
         self.e, self.c, self.mu, self.chi, self.lam = e, c, mu, chi, lam
-        self.alr = alr
-        self.clr = clr
+        self.lr = lr
+        #self.clr = clr
         self.gamma = gamma
         self.entropy_coef = entropy_coef
         self.seed = seed
-        self.a_opt = tf.keras.optimizers.Adam(learning_rate=self.alr)
-        self.c_opt = tf.keras.optimizers.Adam(learning_rate=self.clr)
+        self.opt = tf.keras.optimizers.Adam(learning_rate=self.lr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
         self.num_frames_per_proc = num_frames_per_proc
         self.num_procs = num_procs
         self.log_episode_reward = tf.zeros([self.num_procs, self.num_tasks + 1], dtype=tf.float32)
-        self.fifo_log_episode_rewards = collections.deque(maxlen=min_epsiode_criterion)
         assert self.recurrent or self.recurrence == 1
         assert num_frames_per_proc % recurrence == 0
 
@@ -52,10 +53,10 @@ class Agent:
             self.env.render('human')
             state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
-            action_logits_t = self.actor(state)
+            action_logits_t, _ = self.model(state)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             # Apply the action to the environment to get the next state and reward
-            state, reward, done = self.tf_env_step2(action)
+            state, reward, done = self.tf_render_env_step(action)
             if self.dfa.product_state != cached_dfa_state or done:
                 print(f"DFA state: {self.dfa.product_state}")
                 print(f"DFA complete: {self.dfa.done()}")
@@ -65,33 +66,31 @@ class Agent:
             if tf.cast(done, tf.bool):
                 break
 
-    def reset(self):
+    def render_reset(self):
         if self.seed:
-            self.env.seed(self.seed)
-            state = self.env.reset()
-        else:
-            state = self.env.reset()
+            self.renv.seed(self.seed)
+        state = self.renv.reset()
         # reset the product DFA
         self.dfa.reset()
         initial_state = np.append(state, np.array(self.dfa.progress, dtype=np.float32))
         return initial_state
 
-    def tf_reset(self):
-        return tf.numpy_function(self.reset, [], [tf.float32])
+    def tf_render_reset(self):
+        return tf.numpy_function(self.render_reset, [], [tf.float32])
 
     def tf_reset2(self):
         return tf.numpy_function(self.env.reset, [], [tf.float32])
 
-    def env_step2(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def render_env_step(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward, done flag given an action"""
-        state, reward, done, info = self.env.step(action)
+        state, reward, done, info = self.renv.step(action)
         # where we define the DFA steps
-        self.dfa.next(self.env)
+        self.dfa.next(self.renv)
         task_rewards = self.dfa.rewards(self.one_off_reward)
         agent_reward = 0
         for dfa in self.dfa.dfas:
             if dfa.progress_flag == DFA.Progress.JUST_FINISHED:
-                agent_reward += 1 / self.num_tasks * (1 - 0.9 * self.env.step_count / self.env.max_steps)
+                agent_reward += 1 / self.num_tasks * (1 - 0.9 * self.renv.step_count / self.renv.max_steps)
                 # print(f"agent reward: {agent_reward}")
         if self.dfa.done():
             # Assign the agent reward
@@ -107,8 +106,8 @@ class Agent:
             np.array(rewards_, np.float32),
             np.array(done, np.int32))
 
-    def tf_env_step2(self, action: tf.Tensor) -> List[tf.Tensor]:
-        return tf.numpy_function(self.env_step2, [action], [tf.float32, tf.float32, tf.int32])
+    def tf_render_env_step(self, action: tf.Tensor) -> List[tf.Tensor]:
+        return tf.numpy_function(self.render_env_step, [action], [tf.float32, tf.float32, tf.int32])
 
     def env_step3(self, actions: np.array):
         state, reward, done = self.env.step(actions)
@@ -121,17 +120,17 @@ class Agent:
         state = initial_state
         initial_state_shape = initial_state.shape
         for _ in tf.range(max_steps):
-            self.env.render('human')
+            self.renv.render('human')
             state = tf.expand_dims(state, 0)
             if self.recurrent:
                 state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
-            action_logits_t = self.actor(state)
+            action_logits_t, _ = self.model(state)
             if self.recurrent:
                 action_logits_t = tf.squeeze(action_logits_t, axis=0)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             # Apply the action to the environment to get the next state and reward
-            state, reward, done = self.tf_env_step2(action)
+            state, _, done = self.tf_render_env_step(action)
             state.set_shape(initial_state_shape)
             if tf.cast(done, tf.bool):
                 break
@@ -158,9 +157,11 @@ class Agent:
             if self.recurrent:
                 state = tf.expand_dims(state, 1)
             observations = observations.write(i, state)
-            action_logits_t = self.actor(state)
-            value = self.critic(state)
+            action_logits_t, value = self.model(state)
+            # value = self.critic(state)
             values = values.write(i, value)
+            # action_logits [samples, 1, actions] -> [samples, actions]
+            action_logits_t = tf.squeeze(action_logits_t)
             actions = tf.random.categorical(action_logits_t, num_samples=1, dtype=tf.int32)
             actions = tf.squeeze(actions)
             selected_actions = selected_actions.write(i, actions)
@@ -219,13 +220,12 @@ class Agent:
             if self.recurrent:
                 state = tf.expand_dims(state, 0)
             # Run the model to get an action probability distribution
-            action_logits_t = self.actor(state)
+            action_logits_t, value = self.model(state)
             if self.recurrent:
                 action_logits_t = tf.squeeze(action_logits_t, axis=0)
             action = tf.random.categorical(action_logits_t, 1)[0, 0]
             action_probs_t = tf.nn.softmax(action_logits_t)
             # Store the critic values
-            value = self.critic(state)
             if self.recurrent:
                 value = tf.squeeze(value)
             values = values.write(t, value)
@@ -234,7 +234,7 @@ class Agent:
             action_probs = action_probs.write(t, action_probs_t[0, action])
 
             # Apply the action to the environment to get the next state and reward
-            state, reward, done = self.tf_env_step2(action)
+            state, reward, done = self.tf_render_env_step(action)
             state.set_shape(initial_state_shape)
 
             # Store the reward
@@ -307,13 +307,12 @@ class Agent:
             return tf.convert_to_tensor(0.0)
 
     def compute_H(
-            self, X: tf.Tensor, Xi: tf.Tensor,
-            lam: tf.float32, chi: tf.float32, mu: tf.float32) -> tf.Tensor:
+            self, X: tf.Tensor, Xi: tf.Tensor) -> tf.Tensor:
         # _, y = X.get_shape()
-        H = [lam * self.df(Xi[0])]
+        H = [self.lam * self.df(Xi[0])]
         for j in range(1, self.num_tasks + 1):
             # H.append(chi * self.dh(mu * X[:, j], e) * mu)
-            H.append(chi * self.dh(mu * X[j]) * mu)
+            H.append(self.chi * self.dh(self.mu * X[j]) * self.mu)
         return tf.convert_to_tensor(H)
 
     def computeH2_proc_i(self, X: tf.Tensor, Xi: tf.Tensor, proc: tf.int32) -> tf.Tensor:
@@ -339,7 +338,7 @@ class Agent:
     def compute_actor_loss2(
             self, action_probs: tf.Tensor, values: tf.Tensor, returns: tf.Tensor,
             ini_values: tf.Tensor, ini_values_i: tf.Tensor):
-        H = self.compute_H(ini_values, ini_values_i, self.c, self.e, self.lam, self.chi, self.mu)
+        H = self.compute_H(ini_values, ini_values_i)
         H = tf.expand_dims(H, 1)  # add this while there is only one agent, will need to be taken out this library becomes multiagent
         advantage = tf.matmul(returns - values, H)
         action_log_probs = tf.math.log(action_probs)
@@ -357,21 +356,23 @@ class Agent:
         # entropy_loss = tf.keras.losses.categorical_crossentropy(action_probs, action_probs)
         return actor_loss  # - self.entropy_coef * entropy_loss
 
-    def update_loss(self, observations, actions, masks, returns, advantages):
-        ii = self.tf_starting_indexes()
-        aloss = 0
-        closs = 0
+    def update_loss(self, observations, actions, masks, returns, advantages, ii, batch_shape, mask_shape):
+        loss = 0
         for t in tf.range(self.recurrence):
             ix = ii + t
             # Construct a sub batch of experiences for the timestep t across all of the samples
             sub_batch_obs = tf.gather(observations, indices=ix)
+            #sub_batch_obs.set_shape([40, 1, 50])
+            # print(f"sub batch shape: {sub_batch_obs.shape}, indices: {ix.shape}")
             # Construct the sub batch mask from experiences
             mask = tf.expand_dims(tf.cast(tf.gather(masks, indices=ix), tf.bool), 1)
+            #mask.set_shape([40, 1])
             # Construct the sub batch of advantages and returns from experience samples
             sb_advantage = tf.gather(advantages, indices=ix)
             sb_returns = tf.gather(returns, indices=ix)
             # Compute the actor loss value
-            action_logits_t = self.actor(sub_batch_obs, mask=mask)
+            action_logits_t, value = self.model(sub_batch_obs, mask=mask)
+            action_logits_t = tf.squeeze(action_logits_t)
             sb_actions = tf.gather(actions, indices=ix)
             action_probs_t = tf.nn.softmax(action_logits_t)
             # helper index
@@ -382,14 +383,11 @@ class Agent:
             # finally, calculate the actor loss
             actor_loss = tf.math.reduce_mean(tf.math.log(action_probs) * tf.squeeze(sb_advantage))
             # compute the critic loss value
-            value = self.critic(sub_batch_obs, mask=mask)
             critic_sb_losses = self.huber(tf.squeeze(value), sb_returns)
             # update the loss values
-            aloss += actor_loss
-            closs += tf.nn.compute_average_loss(critic_sb_losses)
-        aloss /= self.recurrence
-        closs /= self.recurrence
-        return aloss, closs
+            loss += actor_loss + tf.nn.compute_average_loss(critic_sb_losses)
+        loss /= self.recurrence
+        return loss
 
     # @tf.function
     def train(
@@ -397,7 +395,7 @@ class Agent:
             initial_state: tf.Tensor,
             max_steps: tf.int32) -> tf.Tensor:
         """Runs a model training step"""
-        with tf.GradientTape() as tape1, tf.GradientTape() as tape2:
+        with tf.GradientTape() as tape:
             # Runs the model for one epsidoe to collect the training data
             action_probs, values, rewards = self.run_episode2(initial_state, max_steps)
             # Calculate the expected returns
@@ -412,10 +410,8 @@ class Agent:
             ini_values = tf.convert_to_tensor(values[0])
             actor_loss = self.compute_actor_loss2(
                 action_probs, values, returns, ini_values, ini_values)
-        grads1 = tape1.gradient(actor_loss, self.actor.trainable_variables)
-        grads2 = tape2.gradient(critic_loss, self.critic.trainable_variables)
-        self.a_opt.apply_gradients(zip(grads1, self.actor.trainable_variables))
-        self.c_opt.apply_gradients(zip(grads2, self.critic.trainable_variables))
+        grads1 = tape.gradient(actor_loss + critic_loss, self.model.trainable_variables)
+        self.opt.apply_gradients(zip(grads1, self.model.trainable_variables))
         episode_reward = tf.math.reduce_sum(rewards, 0)
         return episode_reward
 
@@ -434,7 +430,7 @@ class Agent:
 
         # concatenate masks together => masks reshape: T x S -> S x T -> S * T
         masks = tf.reshape(tf.transpose(masks), [-1])
-        acts = tf.reshape(acts, [-1])
+        acts = tf.reshape(tf.transpose(acts), [-1])
         # Concatenate the samples together =>
         #   values/rewards/returns reshape: T x S x D -> S x T x D -> (S * T) x D
         values = tf.reshape(tf.transpose(values, perm=[1, 0, 2]), [-1, values.shape[-1]])
@@ -446,14 +442,15 @@ class Agent:
         returns = tf.convert_to_tensor(returns)
         observations = tf.convert_to_tensor(observations)
         acts = tf.convert_to_tensor(acts)
-        with tf.GradientTape() as tape1, tf.GradientTape() as tape2:
-            aloss, closs = self.update_loss(observations, acts, masks, returns, advantages)
-            grads1 = tape1.gradient(aloss, self.actor.trainable_variables)
-            grads2 = tape2.gradient(closs, self.critic.trainable_variables)
-            self.a_opt.apply_gradients(zip(grads1, self.actor.trainable_variables))
-            self.c_opt.apply_gradients(zip(grads2, self.critic.trainable_variables))
+        ii = self.tf_starting_indexes()
+        batch_shape = tf.gather(observations, ii).shape
+        mask_shape = tf.expand_dims(tf.cast(tf.gather(masks, indices=ii), tf.bool), 1).shape
+        with tf.GradientTape() as tape:
+            loss = self.update_loss(observations, acts, masks, returns, advantages, ii, batch_shape, mask_shape)
+            grads1 = tape.gradient(loss, self.model.trainable_variables)
+            self.opt.apply_gradients(zip(grads1, self.model.trainable_variables))
 
-        return state, log_reward, running_rewards, aloss, closs
+        return state, log_reward, running_rewards, loss
 
 
 

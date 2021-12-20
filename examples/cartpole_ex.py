@@ -8,56 +8,54 @@ import tqdm
 from a2c_team_tf.utils.dfa import *
 from a2c_team_tf.nets.base import ActorCritic
 from a2c_team_tf.lib import lib_mult_env
+from a2c_team_tf.utils.env_utils import make_env
 from typing import Any, List, Sequence, Tuple
 from abc import ABC
 
+seed = 42
 
 class MoveToPos(DFAStates, ABC):
     def __init__(self):
         self.init = "I"
-        self.just_finish = "J"
-        self.finish = "F"
-        self.failed = "N"
+        self.position = "P"
 
 
 def get_reached(env: gym.Env, _):
     if env is not None:
         if env.env.state[0] > cart_pos:
-            return "F"
+            return "P"
         else:
             return "I"
     else:
         return "I"
 
 
-def finished(data):
-    return "F"
+def finished(data, _):
+    return "P"
 
 
 def make_move_to_pos_dfa():
-    dfa = DFA(start_state="I", acc=["F"], rej=[])
+    dfa = DFA(start_state="I", acc=["P"], rej=[])
     dfa.states = MoveToPos()
     dfa.add_state(dfa.states.init, get_reached)
-    dfa.add_state(dfa.states.finish, finished)
+    dfa.add_state(dfa.states.position, finished)
     return dfa
 
 
 # Create the environment
-env1 = gym.make("CartPole-v0")
-env2 = gym.make("CartPole-v0")
-envs = [env1, env2]
+envs = []
+for i in range(2):
+    envs.append(make_env('Cartpole-v0', 0, seed, False))
 
 # Set seed for experiment reproducibility
-seed = 42
-env1.seed(seed)
-env2.seed(seed)
+
 tf.random.set_seed(seed)
 np.random.seed(seed)
 
 # Small epsilon value for stabilizing division operations
 eps = np.finfo(np.float32).eps.item()
 
-print(env1.observation_space)
+print(envs[0].observation_space)
 
 step_rew0 = 15  # step reward threshold
 
@@ -72,7 +70,7 @@ num_agents = 2
 num_tasks = 1
 dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[task], agent=agent) for agent in range(num_agents)]
 
-num_actions = env1.action_space.n  # 2
+num_actions = envs[0].action_space.n  # 2
 num_hidden_units = 128
 
 models = [ActorCritic(num_actions, num_hidden_units, num_tasks, name="AC{}".format(i)) for i in range(num_agents)]
@@ -100,8 +98,8 @@ alpha2 = 0.001
 # Keep last episodes reward
 episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
 render_env, print_rewards = False, False
-motap = lib_mult_env.TfObsEnv(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
-                          num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
+agent = lib_mult_env.Agent(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
+                           num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
 ## Have to use a smaller learning_rate to make the training convergent
 optimizer = tf.keras.optimizers.Adam(learning_rate=alpha1)  # 0.01
 
@@ -114,10 +112,10 @@ with tqdm.trange(max_episodes) as t:
         # initial_state = tf.constant(env.reset(), dtype=tf.float32)
         # episode_reward = int(train_step(
         #    initial_state, models, optimizer, gamma, max_steps_per_episode))
-        episode_reward, ini_values = motap.train_step(optimizer, gamma, max_steps_per_episode, lam, chi, mu, e, c)
+        episode_reward, ini_values = agent.train_step(optimizer, gamma, max_steps_per_episode, lam, chi, mu, e, c)
         with tf.GradientTape() as tape:
             mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-            allocator_loss = motap.compute_alloc_loss(ini_values, chi, mu, e)
+            allocator_loss = agent.compute_alloc_loss(ini_values, chi, mu, e)
 
         # compute the gradient from the allocator loss vector
         grads_kappa = tape.gradient(allocator_loss, kappa)

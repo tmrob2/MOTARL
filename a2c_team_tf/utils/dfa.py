@@ -76,8 +76,8 @@ class CrossProductDFA:
     def start(self):
         return tuple([dfa.start_state for dfa in self.dfas])
 
-    def next(self, env):
-        self.product_state = tuple([dfa.next(self.product_state[i], env, self.agent) for (i, dfa) in enumerate(self.dfas)])
+    def next(self, data):
+        self.product_state = tuple([dfa.next(self.product_state[i], data, self.agent) for (i, dfa) in enumerate(self.dfas)])
         self.progress = [dfa.progress_flag for dfa in self.dfas]
 
     def rewards(self, one_off_reward):

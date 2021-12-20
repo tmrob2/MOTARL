@@ -70,6 +70,7 @@ class Critic(tf.keras.Model):
 
 class ActorCrticLSTM(tf.keras.Model):
     def __init__(self, num_actions, num_tasks=0, recurrent=False):
+        super().__init__()
         self.recurrent = recurrent
         if recurrent:
             self.lstm = tf.keras.layers.RNN(tf.keras.layers.LSTMCell(64), return_sequences=True)

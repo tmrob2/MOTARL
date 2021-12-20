@@ -8,7 +8,7 @@ from enum import Enum
 eps = np.finfo(np.float32).eps.item()
 huber_loss = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 
-class TfObsEnv:
+class Agent:
     def __init__(
             self,
             envs,
@@ -38,13 +38,21 @@ class TfObsEnv:
 
         # update the task xDFA
         # task.update(state_new[0])
-        self.dfas[agent].next(self.envs[agent])
+        data = {"state": state_new, "reward": step_reward}
+        self.dfas[agent].next(data)
 
         # agent-task rewards
         task_rewards = self.dfas[agent].rewards(self.one_off_reward)
         state_task_rewards = [step_reward] + task_rewards
+        # append the dfa state to the agent state
+        state_ = np.append(state_new, np.array(self.dfas[agent].progress))
 
-        return (state.astype(np.float32),
+        if self.dfas[agent].done():
+            done = True
+        else:
+            done = False
+
+        return (state_.astype(np.float32),
                 # np.array(step_reward, np.int32),
                 np.array(state_task_rewards, np.float32),
                 np.array(done, np.int32))
@@ -52,7 +60,15 @@ class TfObsEnv:
     def env_reset(self, agent):
         state = self.envs[agent].reset()
         self.dfas[agent].reset()
-        return state
+        initial_state = np.append(state, np.array(self.dfas[agent].progress, dtype=np.float32))
+        return initial_state
+
+    def get_action_logits_and_values(self, initial_state, model_index):
+        """Method to collect a block of action logits and values for each agent at time t"""
+        tf.data.Dataset.from_tensor_slices(initial_state)
+        for i in range(self.num_agents):
+            action_logits_i, values = self.models[i](initial_states[i])
+
 
     def tf_reset(self, agent: tf.int32):
         return tf.numpy_function(self.env_reset, [agent], [tf.float32])
@@ -67,8 +83,7 @@ class TfObsEnv:
     def get_expected_returns(
             self,
             rewards: tf.Tensor,
-            gamma: tf.float32,
-            standardize: tf.bool = False) -> tf.Tensor:
+            gamma: tf.float32) -> tf.Tensor:
         """Compute expected returns per timestep"""
         n = tf.shape(rewards)[0]
         returns = tf.TensorArray(dtype=tf.float32, size=n)
@@ -85,9 +100,6 @@ class TfObsEnv:
             discounted_sum.set_shape(discounted_sum_shape)
             returns = returns.write(i, discounted_sum)
         returns = returns.stack()[::-1]
-        if standardize:
-            returns = ((returns - tf.math.reduce_mean(returns)) /
-                       (tf.math.reduce_std(returns) + eps))
         return returns
 
     def df(self, x: tf.Tensor, c: tf.float32) -> tf.Tensor:
@@ -222,9 +234,6 @@ class TfObsEnv:
             if tf.cast(done, tf.bool):
                 break
 
-            if self.render:
-                self.env.render('human')
-
         action_probs = action_probs.stack()
         values = values.stack()
         rewards = rewards.stack()
@@ -236,6 +245,8 @@ class TfObsEnv:
         return action_probs, values, rewards
 
     #@tf.function
+    # todo instead of looking up the initial state within the train step we need to pass in a tensor
+    #  of initial states
     def train_step(
             self,
             optimizer: tf.keras.optimizers.Optimizer,
@@ -254,7 +265,7 @@ class TfObsEnv:
         returns_l = []
 
         with tf.GradientTape() as tape:
-            for i in range(num_models):
+            for i in tf.range(num_models):
                 initial_state = tf.constant(self.envs[i].reset(), dtype=tf.float32)
 
                 # Run an episode
