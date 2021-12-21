@@ -1,6 +1,6 @@
 import gym
 from gym.envs.registration import register
-from a2c_team_tf.envs.team_grid_wrapper import TestEnv
+from a2c_team_tf.envs.team_grid_mult import TestEnv
 import tensorflow as tf
 from a2c_team_tf.lib.single_env_mult_agent import MAS
 from a2c_team_tf.nets.base import ActorCritic

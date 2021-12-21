@@ -1,16 +1,12 @@
-import collections
 import copy
-import gym_minigrid.minigrid
-import gym
 import numpy as np
 from typing import Tuple, List
 import tensorflow as tf
-from a2c_team_tf.utils.dfa import DFA
 from a2c_team_tf.utils.parallel_envs import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
 
 
-class Agent:
+class MORLTAP:
     def __init__(self, envs, model,
                  num_tasks, xdfa, one_off_reward,
                  e, c, mu, chi, lam,
@@ -76,7 +72,7 @@ class Agent:
     def tf_render_reset(self):
         return tf.numpy_function(self.render_reset, [], [tf.float32])
 
-    def tf_reset2(self):
+    def tf_reset(self):
         return tf.numpy_function(self.env.reset, [], [tf.float32])
 
     def render_env_step(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -102,12 +98,12 @@ class Agent:
     def tf_render_env_step(self, action: tf.Tensor) -> List[tf.Tensor]:
         return tf.numpy_function(self.render_env_step, [action], [tf.float32, tf.float32, tf.int32])
 
-    def env_step3(self, actions: np.array):
+    def env_step(self, actions: np.array):
         state, reward, done = self.env.step(actions)
         return state.astype(np.float32), reward.astype(np.float32), done.astype(np.int32)
 
-    def tf_env_step3(self, actions: tf.Tensor) -> List[tf.Tensor]:
-        return tf.numpy_function(self.env_step3, [actions], [tf.float32, tf.float32, tf.int32])
+    def tf_env_step(self, actions: tf.Tensor) -> List[tf.Tensor]:
+        return tf.numpy_function(self.env_step, [actions], [tf.float32, tf.float32, tf.int32])
 
     def render_episode(self, initial_state: tf.Tensor, max_steps: tf.int32):
         state = initial_state
@@ -128,7 +124,7 @@ class Agent:
             if tf.cast(done, tf.bool):
                 break
 
-    def collect_batch2(self, initial_obs: tf.Tensor, log_reward: tf.Tensor):
+    def collect_batch(self, initial_obs: tf.Tensor, log_reward: tf.Tensor, model: tf.keras.Model):
         """Collects rollouts and computes advantages
         Runs several environments concurrently, the next actions are computed in a batch
         for all environments at the same time. The rollouts and the advantages from all
@@ -145,12 +141,12 @@ class Agent:
         log_reward_shape = log_reward.shape
         state = initial_obs
         state_shape = initial_obs.shape
-        log_reward_counter = 0
+        log_reward_counter = tf.constant(0, dtype=tf.int32)
         for i in tf.range(self.num_frames_per_proc):
             if self.recurrent:
                 state = tf.expand_dims(state, 1)
             observations = observations.write(i, state)
-            action_logits_t, value = self.model(state)
+            action_logits_t, value = model(state)
             # value = self.critic(state)
             values = values.write(i, value)
             # action_logits [samples, 1, actions] -> [samples, actions]
@@ -160,7 +156,7 @@ class Agent:
             selected_actions = selected_actions.write(i, actions)
             # indices = tf.transpose([z, actions])
             # action_probs_t = tf.nn.softmax(action_logits_t)
-            state, reward_, done_ = self.tf_env_step3(actions)
+            state, reward_, done_ = self.tf_env_step(actions)
             mask = tf.constant(1.0, dtype=tf.float32) - tf.cast(done_, dtype=tf.float32)
             masks = masks.write(i, mask)
             log_reward += reward_
@@ -168,7 +164,7 @@ class Agent:
             for idx in tf.range(self.num_procs):
                 if tf.cast(done_[idx], tf.bool):
                     running_rewards = running_rewards.write(log_reward_counter, log_reward[idx])
-                    log_reward_counter += 1
+                    log_reward_counter += tf.constant(1, dtype=tf.int32)
             log_reward = tf.expand_dims(mask, 1) * log_reward
             log_reward.set_shape(log_reward_shape)
             rewards = rewards.write(i, reward_)
@@ -200,67 +196,8 @@ class Agent:
     def tf_starting_indexes(self):
         return tf.numpy_function(self._indices, [], [tf.int32])
 
-    def run_episode2(self, initial_state: tf.Tensor, max_steps: tf.int32):
-        """Runs a single episode to collect the training data"""
-        action_probs = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
-        values = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
-        rewards = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
-
-        initial_state_shape = initial_state.shape
-        state = initial_state
-        for t in tf.range(max_steps):
-            state = tf.expand_dims(state, 0)
-            if self.recurrent:
-                state = tf.expand_dims(state, 0)
-            # Run the model to get an action probability distribution
-            action_logits_t, value = self.model(state)
-            if self.recurrent:
-                action_logits_t = tf.squeeze(action_logits_t, axis=0)
-            action = tf.random.categorical(action_logits_t, 1)[0, 0]
-            action_probs_t = tf.nn.softmax(action_logits_t)
-            # Store the critic values
-            if self.recurrent:
-                value = tf.squeeze(value)
-            values = values.write(t, value)
-
-            # Store the probabilities of the action chosen
-            action_probs = action_probs.write(t, action_probs_t[0, action])
-
-            # Apply the action to the environment to get the next state and reward
-            state, reward, done = self.tf_render_env_step(action)
-            state.set_shape(initial_state_shape)
-
-            # Store the reward
-            rewards = rewards.write(t, reward)
-
-            if tf.cast(done, tf.bool):
-                break
-
-        action_probs = action_probs.stack()
-        values = values.stack()
-        rewards = rewards.stack()
-
-        return action_probs, values, rewards
-
-    def get_expected_return(self, rewards: tf.Tensor) -> tf.Tensor:
-        # Compute the expected returns per time-step
-        n = tf.shape(rewards)[0]
-        returns = tf.TensorArray(dtype=tf.float32, size=n)
-        # Start from the end of the rewards and accumulate reward sums into
-        # the returns array
-        rewards = tf.cast(rewards[::-1], dtype=tf.float32)
-        discounted_sum = tf.zeros([self.num_tasks + 1], dtype=tf.float32)
-        discounted_sum_shape = discounted_sum.shape
-        for i in tf.range(n):
-            reward = rewards[i]
-            discounted_sum = reward + self.gamma * discounted_sum
-            discounted_sum.set_shape(discounted_sum_shape)
-            returns = returns.write(i, discounted_sum)
-        returns = returns.stack()[::-1]
-        return returns
-
     def compute_advantages(self, returns, values, ini_values, ini_values_i):
-        H = self.compute_H2(ini_values, ini_values_i)
+        H = self.compute_H(ini_values, ini_values_i)
         advantages = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
         for p in tf.range(self.num_procs):
             sample_advantage = tf.matmul(returns[:, p] - values[:, p], tf.expand_dims(H[p], 1))
@@ -268,7 +205,7 @@ class Agent:
         advantages = advantages.stack()
         return advantages
 
-    def get_expected_return2(self, rewards: tf.Tensor) -> tf.Tensor:
+    def get_expected_return(self, rewards: tf.Tensor) -> tf.Tensor:
         """Expects the shape of rewards to be (steps, proc_sample, tasks + 1)"""
         # Compute the expected returns per time-step
         n = tf.shape(rewards)[0]  # index 1 is the number of experiences collected
@@ -299,16 +236,7 @@ class Agent:
         else:
             return tf.convert_to_tensor(0.0)
 
-    def compute_H(
-            self, X: tf.Tensor, Xi: tf.Tensor) -> tf.Tensor:
-        # _, y = X.get_shape()
-        H = [self.lam * self.df(Xi[0])]
-        for j in range(1, self.num_tasks + 1):
-            # H.append(chi * self.dh(mu * X[:, j], e) * mu)
-            H.append(self.chi * self.dh(self.mu * X[j]) * self.mu)
-        return tf.convert_to_tensor(H)
-
-    def computeH2_proc_i(self, X: tf.Tensor, Xi: tf.Tensor, proc: tf.int32) -> tf.Tensor:
+    def computeH_proc_i(self, X: tf.Tensor, Xi: tf.Tensor, proc: tf.int32) -> tf.Tensor:
         # should be a relatively small calculation
         # computation with list comprehension should add some efficiency
         H = tf.TensorArray(dtype=tf.float32, size=self.num_tasks + 1)
@@ -320,34 +248,13 @@ class Agent:
         H = H.stack()
         return H
 
-    def compute_H2(self, X: tf.Tensor, Xi: tf.Tensor):
+    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor):
         H_ = tf.TensorArray(dtype=tf.float32, size=self.num_procs)
         for proc in tf.range(self.num_procs):
-            H = self.computeH2_proc_i(X, Xi, proc)
+            H = self.computeH_proc_i(X, Xi, proc)
             H_ = H_.write(proc, H)
         H_ = H_.stack()
         return H_
-
-    def compute_actor_loss2(
-            self, action_probs: tf.Tensor, values: tf.Tensor, returns: tf.Tensor,
-            ini_values: tf.Tensor, ini_values_i: tf.Tensor):
-        H = self.compute_H(ini_values, ini_values_i)
-        H = tf.expand_dims(H, 1)  # add this while there is only one agent, will need to be taken out this library becomes multiagent
-        advantage = tf.matmul(returns - values, H)
-        action_log_probs = tf.math.log(action_probs)
-        actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
-        return actor_loss
-
-    def compute_actor_loss(
-            self,
-            action_probs: tf.Tensor,
-            returns: tf.Tensor,
-            values: tf.Tensor) -> tf.Tensor:
-        advantage = returns - values
-        action_log_probs = tf.math.log(action_probs)
-        actor_loss = -tf.math.reduce_sum(action_log_probs * advantage)
-        # entropy_loss = tf.keras.losses.categorical_crossentropy(action_probs, action_probs)
-        return actor_loss  # - self.entropy_coef * entropy_loss
 
     def update_loss(self,
                     observations: tf.Tensor,
@@ -385,7 +292,7 @@ class Agent:
         return loss
 
     @tf.function
-    def train2(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor):
+    def train(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor):
         """
         :param initial_state: The initial states across the sample environments, shape: (samples x features)
         :param log_reward: A logging helper tensor which captures the current rewards
@@ -397,9 +304,9 @@ class Agent:
         # We require advantages for actor loss
         # collect the batch of experiences for all environments over the range of time-steps
         acts, obss, values, rewards, masks, state, running_rewards, log_reward = \
-            self.collect_batch2(initial_state, log_reward)
+            self.collect_batch(initial_state, log_reward)
 
-        returns = self.get_expected_return2(rewards)
+        returns = self.get_expected_return(rewards)
         ini_values = values[0, :, :]
         advantages = self.compute_advantages(returns, values, ini_values, ini_values)
 
@@ -407,7 +314,7 @@ class Agent:
         masks = tf.reshape(tf.transpose(masks), [-1])
         acts = tf.reshape(tf.transpose(acts), [-1])
         # Concatenate the samples together =>
-        #   values/rewards/returns reshape: T x S x D -> S x T x D -> (S * T) x D
+        # values/rewards/returns reshape: T x S x D -> S x T x D -> (S * T) x D
         values = tf.reshape(tf.transpose(values, perm=[1, 0, 2]), [-1, values.shape[-1]])
         returns = tf.reshape(tf.transpose(returns, perm=[1, 0, 2]), [-1, values.shape[-1]])
         observations = tf.reshape(tf.transpose(obss, perm=[1, 0, 2, 3]), [-1, obss.shape[-2], obss.shape[-1]])

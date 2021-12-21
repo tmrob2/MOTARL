@@ -13,7 +13,7 @@ import gym
 import tqdm
 from a2c_team_tf.utils import obs_wrapper
 from a2c_team_tf.nets.base import Actor, Critic
-from a2c_team_tf.lib.tf2_a2c_base import Agent
+from a2c_team_tf.lib.tf2_a2c_base import MORLTAP
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.minigrid_empty_mult import EmptyMultiTask
@@ -63,8 +63,8 @@ def make_dfa():
 task = make_dfa()
 xdfa = CrossProductDFA(num_tasks=1, dfas=[copy.deepcopy(task)], agent=0)
 e, c, mu, chi, lam = 0.8, 0.85, 1.0, 1.0, 1.0
-agent = Agent(env, actor, critic, num_tasks=1, xdfa=xdfa, one_off_reward=1.0,
-              e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, alr=5e-5, clr=5e-5)
+agent = MORLTAP(env, actor, critic, num_tasks=1, xdfa=xdfa, one_off_reward=1.0,
+                e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, alr=5e-5, clr=5e-5)
 with tqdm.trange(max_episodes) as t:
     for i in t:
         initial_state = agent.tf_reset()

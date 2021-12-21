@@ -1,6 +1,5 @@
 from collections import defaultdict
 
-import teamgrid.minigrid
 from teamgrid.minigrid import *
 
 class Point():
@@ -14,14 +13,18 @@ class Point():
         return hash((self.x, self.y))
 
 class TestEnv(MiniGridEnv):
-    def __init__(self, num_agents=2, penalty=30, width=5, height=5):
+    def __init__(self, num_agents=2, penalty=5, width=5, height=5, numKeys=1, numBalls=1):
         self.num_agents = num_agents
         self.penalty = penalty
+        self.num_keys = numKeys
+        self.num_balls = numBalls
+
         super().__init__(
             width=width,
             height=height,
-            max_steps=100,
-            agent_view_size=max(width, height)
+            max_steps=50,
+            agent_view_size=max(width, height),
+            see_through_walls=True
         )
 
     def _gen_grid(self, width, height):
@@ -29,10 +32,14 @@ class TestEnv(MiniGridEnv):
         self.grid = Grid(width, height)
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
-        # randomise the player start positions
-        for i in range(1):
-            obj = Ball(color='green')
-            self.grid.set(1, 1, obj)
+
+        for key in range(self.num_keys):
+            obj = Key('red')
+            self.place_obj(obj)
+
+        for ball in range(self.num_balls):
+            obj = Ball('blue')
+            self.place_obj(obj)
 
         for i in range(self.num_agents):
             self.place_agent()

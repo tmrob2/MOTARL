@@ -1,10 +1,3 @@
-# thoughts: we can engineer the reward further by constructing a reward function
-# rewarding steps in multitask completion, i.e. if there are two tasks then the
-# reward function looks like 0.5 - 0.9 * steps / (max_steps / 2). This is a one off
-# reward for completing one task and two task completion will obviously be
-# 1 - 0.9 * steps / max_steps, i.e. a reward of one for accomplishing both tasks -
-# a penalty for the number of steps taken to get here.
-
 """
 Consecutive task DFA environment
 """
@@ -13,15 +6,11 @@ import collections
 import copy
 import numpy as np
 import tensorflow as tf
-import gym
-import tqdm
-from a2c_team_tf.utils import obs_wrapper
-from a2c_team_tf.nets.base import Actor, Critic, ActorCrticLSTM
-from a2c_team_tf.lib.tf2_a2c_base import Agent
+from a2c_team_tf.nets.base import ActorCrticLSTM
+from a2c_team_tf.lib.tf2_a2c_base import MORLTAP
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.minigrid_fetch_mult import MultObjNoGoal
-from a2c_team_tf.utils.parallel_envs import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
 
 
@@ -95,14 +84,14 @@ ball = make_pickup_ball_dfa()
 key = make_pickup_key_dfa()
 xdfa = CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(obj) for obj in [key, ball]], agent=0)
 e, c, mu, chi, lam = 0.8, 0.85, 1.0, 1.0, 1.0
-agent = Agent(envs, model, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
-              e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, lr=1e-4,
-              num_procs=num_procs, num_frames_per_proc=max_steps_per_update, recurrence=recurrence)
+agent = MORLTAP(envs, model, num_tasks=num_tasks, xdfa=xdfa, one_off_reward=1.0,
+                e=e, c=c, mu=mu, chi=chi, lam=lam, gamma=1.0, lr=1e-4,
+                num_procs=num_procs, num_frames_per_proc=max_steps_per_update, recurrence=recurrence)
 
-state = agent.tf_reset2()
+state = agent.tf_reset()
 log_reward = tf.zeros([num_procs, num_tasks + 1], dtype=tf.float32)
-actions, observations, values, rewards, masks, state, running_rewards, log_reward = agent.collect_batch2(initial_obs=state, log_reward=log_reward)
-returns = agent.get_expected_return2(rewards)
+actions, observations, values, rewards, masks, state, running_rewards, log_reward = agent.collect_batch(initial_obs=state, log_reward=log_reward)
+returns = agent.get_expected_return(rewards)
 ini_values = values[0, :, :]
 advantages = agent.compute_advantages(returns, values, ini_values, ini_values)
 # concatenate masks together => masks reshape: T x S -> S x T -> S * T
