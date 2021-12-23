@@ -31,7 +31,7 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
 max_epsiode_steps = 50
-max_episodes = 10000
+max_episodes = 20000
 num_tasks = 2
 num_agents = 2
 reward_threshold = 0.9
@@ -114,8 +114,8 @@ xdfas = [[
         agent=agent) for agent in range(num_agents)] for _ in range(num_procs)]
 e, c, chi, lam = 0.8, 0.85, 1.0, 1.0
 models = [ActorCrticLSTM(envs[0].action_space.n, num_tasks, recurrent) for _ in range(num_agents)]
-agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=1.0,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, lr2=0.001, seed=seed,
+agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=100.0,
+                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, lr2=0.01, seed=seed,
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
                 recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key)
 
@@ -128,7 +128,6 @@ checkpoint = tf.train.Checkpoint()
 #############################################################################
 episodes_reward = collections.deque(maxlen=min_episode_criterion)
 kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
-kopt = tf.keras.optimizers.SGD(learning_rate=0.1)
 with tqdm.trange(max_episodes) as t:
     # get the initial state
     state = agent.tf_reset2()
@@ -146,8 +145,6 @@ with tqdm.trange(max_episodes) as t:
             kappa_grads = tape.gradient(alloc_loss, kappa)
             processed_grads = [-agent.lr2 * g for g in kappa_grads]
             kappa.assign_add(processed_grads)
-        if i % 200 == 0:
-            tf.print("mu\n", mu)
         t.set_description(f"Batch: {i}")
         for reward in running_reward:
             episodes_reward.append(reward.numpy().flatten())
@@ -165,6 +162,7 @@ with tqdm.trange(max_episodes) as t:
         if episodes_reward:
             if running_reward[0] > reward_threshold and i >= min_episode_criterion:
                 break
+print("mu ", mu)
 
 # Save the model(s)
 ix = 0

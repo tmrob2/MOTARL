@@ -20,7 +20,6 @@ class MORLTAP:
                 envs,
                 xdfas,
                 one_off_reward,
-                num_tasks,
                 num_agents,
                 seed)
         if env_key:
@@ -416,7 +415,6 @@ class MORLTAP:
 
         observations, acts, masks, returns, values, advantages, state, log_reward, \
             running_rewards, ini_values = self.train_preprocess(initial_state, log_reward, ii, mu, *args)
-
         with tf.GradientTape() as tape:
             loss = self.update_loss(observations, acts, masks, returns, advantages, ii, *args)
         vars_l = [m.trainable_variables for m in self.models]

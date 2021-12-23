@@ -77,7 +77,7 @@ max_steps_per_episode = 50
 max_steps_per_update = 10
 recurrence = 10
 max_episode_steps = 2
-e, c, mu, chi, lam = tf.constant([0.8], dtype=tf.float32), 0.85, 0.5, 1.0, 1.0
+e, c, mu, chi, lam = tf.constant([0.8], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
 envs = []
 ball = make_pickupanddrop_ball_dfa()
 key = make_pickup_key_dfa()
@@ -136,6 +136,8 @@ print("running rewards shape ", running_rewards.shape)
 print("log rewards shape ", log_rewards.shape)
 indices = agent.tf_1d_indices()
 state = initial_states
+# state, log_rewards, running_rewards, loss, ini_values = agent.train(state, log_rewards, indices, mu, *models)
+
 with tqdm.trange(10) as t:
     for i in t:
         state, log_rewards, running_rewards, loss, ini_values = agent.train(state, log_rewards, indices, mu, *models)
