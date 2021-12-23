@@ -7,7 +7,7 @@ import tensorflow as tf
 import tqdm
 from a2c_team_tf.utils.dfa import *
 from a2c_team_tf.nets.base import ActorCritic
-from a2c_team_tf.lib import lib_mult_env
+from a2c_team_tf.lib.lib_mult_env import Agent
 from a2c_team_tf.utils.env_utils import make_env
 from typing import Any, List, Sequence, Tuple
 from abc import ABC
@@ -81,7 +81,7 @@ dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[task], agent=agent) for agent
 num_actions = envs[0].action_space.n  # 2
 num_hidden_units = 128
 
-models = np.array([ActorCritic(num_actions, num_hidden_units, num_tasks, name="AC{}".format(i)) for i in range(num_agents)])
+models = [ActorCritic(num_actions, num_hidden_units, num_tasks, name="AC{}".format(i)) for i in range(num_agents)]
 ## Some auxiliary functions for defining the "compute_loss" function.
 # mu = 1.0 / num_agents  # fixed even probability of allocating each task to each agent
 lam = 1.0
@@ -102,4 +102,8 @@ gamma = 1.00
 alpha1 = 0.001
 alpha2 = 0.001
 
-modelset = tf.data.Dataset.from_tensor_slices(models)
+agent = Agent(envs=envs, dfas=dfas, one_off_reward=one_off_reward, num_tasks=num_tasks,
+              num_agents=num_agents)
+
+initial_state = agent.tf_reset(0)
+print("initial state shape ", initial_state.shape)

@@ -3,12 +3,12 @@ import os
 import numpy as np
 
 
-def worker(conn, path):
+def worker(conn, path, num_agents, num_tasks):
     while True:
         cmd, data = conn.recv()
         # append the data to a file
         if cmd == 'write':
-            data_2d = np.reshape(data, (1, 3))
+            data_2d = np.reshape(data, (1, num_agents * (1  + num_tasks)))
             with open(path, "ab") as f:
                 np.savetxt(f, data_2d, delimiter=',')
         else:
@@ -16,7 +16,7 @@ def worker(conn, path):
 
 
 class AsyncWriter:
-    def __init__(self, fname):
+    def __init__(self, fname, num_agents, num_tasks):
         self.fname = fname
         self.path = self.path = \
             os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data'))
@@ -24,7 +24,7 @@ class AsyncWriter:
         local, remote = Pipe()
         self.locals = []
         self.locals.append(local)
-        p = Process(target=worker, args=(remote, self.abs_fname))
+        p = Process(target=worker, args=(remote, self.abs_fname, num_agents, num_tasks))
         p.daemon = True
         p.start()
         remote.close()

@@ -12,23 +12,18 @@ class Agent:
     def __init__(
             self,
             envs,
-            models: List[tf.keras.Model],
             dfas: List[CrossProductDFA],
             one_off_reward,
-            num_tasks, num_agents, render=False, debug=False, loss_debug=False):
+            num_tasks, num_agents):
         self.envs = envs
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = num_tasks
         self.num_agents = num_agents
-        self.render: bool = render
-        self.debug: bool = debug
-        self.models: List[tf.keras.Model] = models
         self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
         self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
         self.one_off_reward = one_off_reward
-        self.loss_debug = loss_debug
 
-    def env_step(self, state: np.ndarray, action: np.ndarray, agent: np.int32) -> Tuple[
+    def env_step(self, action: np.ndarray, agent: np.int32) -> Tuple[
         np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward and done flag given an action."""
 
@@ -62,13 +57,6 @@ class Agent:
         self.dfas[agent].reset()
         initial_state = np.append(state, np.array(self.dfas[agent].progress, dtype=np.float32))
         return initial_state
-
-    def get_action_logits_and_values(self, initial_state, model_index):
-        """Method to collect a block of action logits and values for each agent at time t"""
-        tf.data.Dataset.from_tensor_slices(initial_state)
-        for i in range(self.num_agents):
-            action_logits_i, values = self.models[i](initial_states[i])
-
 
     def tf_reset(self, agent: tf.int32):
         return tf.numpy_function(self.env_reset, [agent], [tf.float32])
@@ -195,7 +183,8 @@ class Agent:
             self,
             initial_state: tf.Tensor,
             env_index: tf.int32,
-            max_steps: tf.int32) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+            max_steps: tf.int32,
+            model: tf.keras.Model) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
         """Runs a single episode to collect training data."""
 
         action_probs = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
@@ -209,7 +198,7 @@ class Agent:
             state1 = tf.expand_dims(state, 0)
 
             # Run the model and to get action probabilities and critic value
-            action_logits_t, value = self.models[env_index](state1)
+            action_logits_t, value = model(state1)
 
             # Sample next action from the action probability distribution
             action = tf.random.categorical(action_logits_t, 1)[0, 0]

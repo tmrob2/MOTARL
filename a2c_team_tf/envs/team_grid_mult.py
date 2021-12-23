@@ -13,7 +13,7 @@ class Point():
         return hash((self.x, self.y))
 
 class TestEnv(MiniGridEnv):
-    def __init__(self, num_agents=2, penalty=5, width=5, height=5, numKeys=1, numBalls=1):
+    def __init__(self, num_agents=2, penalty=5, width=4, height=4, numKeys=1, numBalls=1):
         self.num_agents = num_agents
         self.penalty = penalty
         self.num_keys = numKeys
@@ -103,8 +103,18 @@ class TestEnv(MiniGridEnv):
         # We assume in this test environment that there are no natural end points
         # and there are no goals so done is always true
         observation, step_rewards, _, _ = MiniGridEnv.step(self, actions)
+        obs_ = []
+        for img in observation:
+            obs_.append(img.flatten())
         rewards = [rewards[idx] + r_ for idx, r_ in enumerate(step_rewards)]
-        return observation, rewards, True, info
+        return obs_, rewards, False, info
+
+    def reset(self):
+        obs = MiniGridEnv.reset(self)
+        obs_ = []
+        for img in obs:
+            obs_.append(img.flatten())
+        return obs_
 
 
 
