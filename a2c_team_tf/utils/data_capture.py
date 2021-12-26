@@ -24,6 +24,8 @@ class AsyncWriter:
         local, remote = Pipe()
         self.locals = []
         self.locals.append(local)
+        # delete the contents of the file before beginning learning and writing
+        open(self.abs_fname, "w").close()
         p = Process(target=worker, args=(remote, self.abs_fname, num_agents, num_tasks))
         p.daemon = True
         p.start()

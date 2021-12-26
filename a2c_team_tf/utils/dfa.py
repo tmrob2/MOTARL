@@ -94,7 +94,7 @@ class CrossProductDFA:
         self.product_state = self.start()
 
     def done(self):
-        return all([dfa.progress_flag == 2 for dfa in self.dfas])
+        return all([dfa.progress_flag == 2 or dfa.progress_flag == -1 for dfa in self.dfas])
 
     def compute_state_space(self):
         states = [dfa.states for dfa in self.dfas]

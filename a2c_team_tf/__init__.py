@@ -34,3 +34,13 @@ register(
     id='Team-obj-5x5-v0',
     entry_point='a2c_team_tf.envs.team_grid_mult:TestEnv'
 )
+
+register(
+    id='CartPole-default-v0',
+    entry_point='a2c_team_tf.envs.cartpole_ma:CartPoleDefault'
+)
+
+register(
+    id='CartPole-heavy-long-v0',
+    entry_point='a2c_team_tf.envs.cartpole_ma:CartPoleHeavyLong'
+)

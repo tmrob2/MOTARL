@@ -52,7 +52,7 @@ class TestEnv(MiniGridEnv):
         return ((key, locs) for key, locs in tally.items() if len(locs) > 1)
 
     def step(self, actions):
-        # I guess actions are a vector now
+        # I guess actions are a vprint(dones)ector now
         conflicting_positions = [None] * self.num_agents
         # conflict positions looks like: {(x,y): [a_1,a_2,...,a_k]}
         object_pickup_conflict = [None] * self.num_agents

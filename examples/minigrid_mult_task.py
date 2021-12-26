@@ -115,15 +115,13 @@ xdfas = [[
 e, c, chi, lam = 0.8, 0.85, 1.0, 1.0
 models = [ActorCrticLSTM(envs[0].action_space.n, num_tasks, recurrent) for _ in range(num_agents)]
 agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=100.0,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, lr2=0.01, seed=seed,
+                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, lr2=0.005, seed=seed,
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
                 recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key)
 
 data_writer = AsyncWriter('data-4x4-lstm-ma', num_agents, num_tasks)
 
-checkpoint = tf.train.Checkpoint()
-
-#############################################################################
+############################################################################
 # TRAIN AGENT SCRIPT
 #############################################################################
 episodes_reward = collections.deque(maxlen=min_episode_criterion)
@@ -152,7 +150,8 @@ with tqdm.trange(max_episodes) as t:
             running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
             data_writer.write(running_reward)
             t.set_postfix(running_r=running_reward, loss=loss.numpy())
-
+        if i % 1000 == 0 and i > 0:
+            print("mu\n", mu)
         if i % 200 == 0:
             # render an episode
             r_init_state = agent.render_reset()
@@ -169,7 +168,7 @@ ix = 0
 for model in models:
     r_init_state = agent.render_reset()
     r_init_state = tf.expand_dims(tf.expand_dims(r_init_state, 1), 2)
-    _ = model(r_init_state[ix])
+    _ = model(r_init_state[ix])  # calling the model makes tells tensorflow the size of the model
     tf.saved_model.save(model, f"/home/tmrob2/PycharmProjects/MORLTAP/saved_models/agent{ix}_lstm_4x4_ma")
     ix += 1
 

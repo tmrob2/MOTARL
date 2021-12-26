@@ -1,5 +1,6 @@
 import collections
 import copy
+import math
 import gym
 import numpy as np
 import statistics
@@ -7,45 +8,65 @@ import tensorflow as tf
 import tqdm
 from a2c_team_tf.utils.dfa import *
 from a2c_team_tf.nets.base import ActorCritic
-from a2c_team_tf.lib import lib_mult_env
+from a2c_team_tf.lib.lib_mult_env import Agent
 from a2c_team_tf.utils.env_utils import make_env
+from a2c_team_tf.utils.data_capture import AsyncWriter
 from typing import Any, List, Sequence, Tuple
 from abc import ABC
 
+gym.logger.set_level(40)
 seed = 42
+cart_pos = 2.0  # the position for the task
 
 class MoveToPos(DFAStates, ABC):
     def __init__(self):
         self.init = "I"
         self.position = "P"
+        self.fail = "F"
 
-
-def get_reached(env: gym.Env, _):
-    if env is not None:
-        if env.env.state[0] > cart_pos:
-            return "P"
-        else:
-            return "I"
+def go_left_to_pos(data, _):
+    if data['state'][0] < -0.5 and not data['done']:
+        return "P"
+    elif data['done']:
+        return "F"
     else:
         return "I"
 
+def go_right(data, _):
+    if data['state'][0] > 1.0 and not data['done']:
+        return "P"
+    elif data['done']:
+        return "F"
+    else:
+        return "I"
 
-def finished(data, _):
+def finished_move(data, _):
     return "P"
 
+def failed(data, _):
+    return "F"
 
 def make_move_to_pos_dfa():
-    dfa = DFA(start_state="I", acc=["P"], rej=[])
+    dfa = DFA(start_state="I", acc=["P"], rej=["F"])
     dfa.states = MoveToPos()
-    dfa.add_state(dfa.states.init, get_reached)
-    dfa.add_state(dfa.states.position, finished)
+    dfa.add_state(dfa.states.init, go_right)
+    dfa.add_state(dfa.states.position, finished_move)
+    dfa.add_state(dfa.states.fail, failed)
+    return dfa
+
+def make_move_left_to_pos():
+    dfa = DFA(start_state="I", acc=["P"], rej=["F"])
+    dfa.states = MoveToPos()
+    dfa.add_state(dfa.states.init, go_left_to_pos)
+    dfa.add_state(dfa.states.position, finished_move)
+    dfa.add_state(dfa.states.fail, failed)
     return dfa
 
 
 # Create the environment
 envs = []
-for i in range(2):
-    envs.append(make_env('Cartpole-v0', 0, seed, False))
+envs.append(make_env('CartPole-default-v0', 0, seed, False))
+envs.append(make_env('CartPole-heavy-long-v0', 0, seed + 10000, False))
 
 # Set seed for experiment reproducibility
 
@@ -57,37 +78,31 @@ eps = np.finfo(np.float32).eps.item()
 
 print(envs[0].observation_space)
 
-step_rew0 = 15  # step reward threshold
-
-cart_pos = 2.0  # the position for the task
-
-one_off_reward = 10.0  # one-off reward
+one_off_reward = 100.0  # one-off reward
 task_prob0 = 0.8  # the probability threhold of archieving the above task
 
-task = make_move_to_pos_dfa()  # make_move_to_pos_dfa()
+right = make_move_to_pos_dfa()
+left = make_move_left_to_pos()
 
 num_agents = 2
-num_tasks = 1
-dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[task], agent=agent) for agent in range(num_agents)]
+num_tasks = 2
+dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[right, left], agent=agent) for agent in range(num_agents)]
 
 num_actions = envs[0].action_space.n  # 2
 num_hidden_units = 128
 
 models = [ActorCritic(num_actions, num_hidden_units, num_tasks, name="AC{}".format(i)) for i in range(num_agents)]
-## Some auxiliary functions for defining the "compute_loss" function.
-# mu = 1.0 / num_agents  # fixed even probability of allocating each task to each agent
 lam = 1.0
 chi = 1.0
-c = step_rew0
+c = 300
 e = task_prob0 * one_off_reward  # task reward threshold
 
 min_episodes_criterion = 100
-max_episodes = 1000  # 10000
-max_steps_per_episode = 50  # 1000
+max_episodes = 30000  # 10000
+max_steps_per_episode = 1000  # 1000
 
 # Cartpole-v0 is considered solved if average reward is >= 195 over 100
 # consecutive trials
-reward_threshold = 195
 running_reward = 0
 
 ## No discount
@@ -95,51 +110,37 @@ gamma = 1.00
 alpha1 = 0.001
 alpha2 = 0.001
 
-# Keep last episodes reward
-episodes_reward: collections.deque = collections.deque(maxlen=min_episodes_criterion)
-render_env, print_rewards = False, False
-agent = lib_mult_env.Agent(envs=envs, models=models, dfas=dfas, one_off_reward=one_off_reward,
-                           num_tasks=num_tasks, num_agents=num_agents, render=render_env, debug=print_rewards)
-## Have to use a smaller learning_rate to make the training convergent
-optimizer = tf.keras.optimizers.Adam(learning_rate=alpha1)  # 0.01
+agent = Agent(envs=envs, dfas=dfas, e=e, c=c, chi=chi, lam=lam, gamma=gamma,
+              one_off_reward=one_off_reward, num_tasks=num_tasks, num_agents=num_agents)
 
-kappa = tf.Variable(np.random.rand(num_tasks * num_agents), dtype=tf.float32)
-# print(f"kappa:{kappa}")
+data_writer = AsyncWriter('data-cartpole', num_agents, num_tasks)
+
+############################################################################
+# TRAIN AGENT SCRIPT
+#############################################################################
+episodes_reward = collections.deque(maxlen=min_episodes_criterion)
+kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
+mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+
+agent_threshold = 195.
 
 with tqdm.trange(max_episodes) as t:
     for i in t:
-        mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-        # initial_state = tf.constant(env.reset(), dtype=tf.float32)
-        # episode_reward = int(train_step(
-        #    initial_state, models, optimizer, gamma, max_steps_per_episode))
-        episode_reward, ini_values = agent.train_step(optimizer, gamma, max_steps_per_episode, lam, chi, mu, e, c)
-        with tf.GradientTape() as tape:
-            mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-            allocator_loss = agent.compute_alloc_loss(ini_values, chi, mu, e)
-
-        # compute the gradient from the allocator loss vector
-        grads_kappa = tape.gradient(allocator_loss, kappa)
-        # print(f"grads kappa: {grads_kappa}")
-        processed_grads = [-alpha2 * g for g in grads_kappa]
-        kappa.assign_add(processed_grads)
-        # print(f"kappa: {kappa}")
-
-        episode_reward = int(episode_reward)
-
+        initial_states = agent.get_initial_states()
+        rewards, ini_values = \
+            agent.train_step(initial_states, max_steps_per_episode, mu, *models)
+        # Calculate the episode rewards
+        episode_reward = np.around(
+            tf.reshape(tf.reduce_sum(rewards, 1), [-1]).numpy(), decimals=2)
         episodes_reward.append(episode_reward)
-        running_reward = statistics.mean(episodes_reward)
+        running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
+        data_writer.write(episode_reward)
+        if i % 500 == 0:
+            agent.render_episode(max_steps_per_episode, *models)
+        t.set_description(f"Epsiode: {i}")
+        t.set_postfix(running_reward=running_reward)
 
-        t.set_description(f'Episode {i}')
-        t.set_postfix(
-            episode_reward=episode_reward, running_reward=running_reward)
-
-        # Show the learned values, and learned allocation matrix every 20 steps
-        if i % 20 == 0:
-            for k in range(num_agents):
-                print(f'values at the initial state for model#{k}: {ini_values[k]}')
-            print(f"allocation matrix mu: \n{mu}")
-
-        if running_reward > reward_threshold and i >= min_episodes_criterion:
+        if all(x > 195 for x in running_reward[::3]) and all(x > e for x in running_reward[1::3]) \
+                and all(x > e for x in running_reward[2::3]) and i > min_episodes_criterion:
             break
 
-print(f'\nSolved at episode {i}: average reward: {running_reward:.2f}!')

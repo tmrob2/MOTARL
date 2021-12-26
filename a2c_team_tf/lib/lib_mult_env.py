@@ -1,8 +1,10 @@
 import numpy as np
 import gym
 import tensorflow as tf
+from tensorflow import Variable
+
 from a2c_team_tf.utils.dfa import CrossProductDFA
-from typing import List, Tuple
+from typing import List, Tuple, Union, Any
 from enum import Enum
 
 eps = np.finfo(np.float32).eps.item()
@@ -13,15 +15,22 @@ class Agent:
             self,
             envs,
             dfas: List[CrossProductDFA],
+            c, e, chi, lam, gamma,
             one_off_reward,
-            num_tasks, num_agents):
+            num_tasks, num_agents, lr1=1e-4, lr2=1e-4):
         self.envs = envs
+        self.e, self.c, self.chi, self.lam = e, c, chi, lam
+        self.gamma = gamma
+        self.lr1 = lr1
+        self.lr2 = lr2
         self.dfas: List[CrossProductDFA] = dfas
         self.num_tasks = num_tasks
         self.num_agents = num_agents
         self.mean: tf.Variable = tf.Variable(0.0, trainable=False)
         self.episode_reward: tf.Variable = tf.Variable(0.0, trainable=False)
         self.one_off_reward = one_off_reward
+        self.opt = tf.keras.optimizers.Adam(learning_rate=lr1)
+        self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.SUM)
 
     def env_step(self, action: np.ndarray, agent: np.int32) -> Tuple[
         np.ndarray, np.ndarray, np.ndarray]:
@@ -30,10 +39,8 @@ class Agent:
         state_new, step_reward, done, _ = self.envs[agent].step(action)
 
         ## Get a one-off reward when reaching the position threshold for the first time.
-
         # update the task xDFA
-        # task.update(state_new[0])
-        data = {"state": state_new, "reward": step_reward}
+        data = {"state": state_new, "reward": step_reward, "done": done}
         self.dfas[agent].next(data)
 
         # agent-task rewards
@@ -52,6 +59,26 @@ class Agent:
                 np.array(state_task_rewards, np.float32),
                 np.array(done, np.int32))
 
+    def render_episode(self, max_steps, *models):
+        state = self.get_initial_states()
+        # state_shape = initial_states.shape
+        for _ in tf.range(max_steps):
+            state_store_tensor = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+            dones = []
+            for i, model in enumerate(models):
+                # generate a policy according to the model and act out the trajectory
+                self.envs[i].render('human')
+                state_ = tf.expand_dims(state[i], 0)
+                action_logits, _ = model(state_)
+                action = tf.random.categorical(action_logits, 1)[0, 0]
+                state_i, _, done = self.tf_env_step(action, i)
+                dones.append(tf.cast(done, tf.bool).numpy())
+                state_store_tensor = state_store_tensor.write(i, state_i)
+            state = state_store_tensor.stack()
+            if all(dones):
+                break
+
+
     def env_reset(self, agent):
         state = self.envs[agent].reset()
         self.dfas[agent].reset()
@@ -61,51 +88,55 @@ class Agent:
     def tf_reset(self, agent: tf.int32):
         return tf.numpy_function(self.env_reset, [agent], [tf.float32])
 
-    def tf_env_step(self, state: tf.Tensor, action: tf.Tensor, agent: tf.int32) -> List[tf.Tensor]:
+    def get_initial_states(self):
+        initial_states = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+        for agent in tf.range(self.num_agents):
+            init_state_i = self.tf_reset(agent)
+            initial_states = initial_states.write(agent, init_state_i)
+        initial_states = initial_states.stack()
+        return initial_states
+
+    def tf_env_step(self, action: tf.Tensor, agent: tf.int32) -> List[tf.Tensor]:
         """
         tensorflow function for wrapping the environment step function of the env object
         returns model parameters defined in base.py of a tf.keras.model
         """
-        return tf.numpy_function(self.env_step, [state, action, agent], [tf.float32, tf.float32, tf.int32])
+        return tf.numpy_function(self.env_step, [action, agent], [tf.float32, tf.float32, tf.int32])
 
     def get_expected_returns(
             self,
-            rewards: tf.Tensor,
-            gamma: tf.float32) -> tf.Tensor:
-        """Compute expected returns per timestep"""
+            rewards: tf.Tensor) -> tf.Tensor:
+        """Compute expected returns per timestep for a given agent (implicit in the rewards input)"""
         n = tf.shape(rewards)[0]
         returns = tf.TensorArray(dtype=tf.float32, size=n)
 
         # Start from the end of rewards and accumulate reward sums into the returns array
         rewards = tf.cast(rewards[::-1], dtype=tf.float32)
 
-        # discounted_sum = tf.constant(0.0)
-        discounted_sum = tf.constant([0.0] * (self.num_tasks + 1))
+        discounted_sum = tf.constant([0.0] * (self.num_tasks + 1), dtype=tf.float32)
         discounted_sum_shape = discounted_sum.shape
         for i in tf.range(n):
             reward = rewards[i]
-            discounted_sum = reward + gamma * discounted_sum
+            discounted_sum = reward + self.gamma * discounted_sum
             discounted_sum.set_shape(discounted_sum_shape)
             returns = returns.write(i, discounted_sum)
         returns = returns.stack()[::-1]
         return returns
 
-    def df(self, x: tf.Tensor, c: tf.float32) -> tf.Tensor:
+    def df(self, x: tf.Tensor) -> tf.Tensor:
         """derivative of mean squared error"""
-        if tf.less_equal(x, c):
-            return 2 * (x - c)
+        if tf.less_equal(x, self.c):
+            return 2 * (x - self.c)
         else:
             return tf.convert_to_tensor(0.0)
 
-    @staticmethod
-    def dh(x: tf.Tensor, e) -> tf.Tensor:
+    def dh(self, x: tf.Tensor) -> tf.Tensor:
         # print(f"x: {x}, e: {e}")
-        if tf.less_equal(x, e) and tf.greater(x, 0.0):
-            return 2 * (x - e)
+        if tf.less_equal(x, self.e):
+            return 2 * (x - self.e)
         else:
             return tf.convert_to_tensor(0.0)
 
-    #@tf.function
     #@staticmethod
     #def dh(x: tf.float32, e: tf.float32) -> tf.Tensor:
     #    if tf.greater_equal(e, x) and tf.greater(x, 0.0):
@@ -113,8 +144,7 @@ class Agent:
     #    else:
     #        return tf.convert_to_tensor(0.0)
 
-    #@tf.function
-    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, agent: tf.int32, lam: tf.float32, chi: tf.float32, mu: tf.Tensor, e: tf.float32, c: tf.float32) -> tf.Tensor:
+    def compute_H(self, X: tf.Tensor, Xi: tf.Tensor, agent: tf.int32, mu: tf.Tensor) -> tf.Tensor:
         """
         :param X: values (non-participant in gradient)
         :param Xi: initial_values (non-participant in gradient)
@@ -125,21 +155,22 @@ class Agent:
         :return:
         """
         _, y = X.get_shape()
-        H = [lam * self.df(Xi[0], c)]
+        H = tf.TensorArray(dtype=tf.float32, size=self.num_tasks + 1)
+        H = H.write(0, self.lam * self.df(Xi[0]))
+        #H = H.write(0, self.lam * self.df(X[0]))
         for j in range(1, y):
             # print(f"mu_{agent}{j -1 }: {mu[agent, j - 1]}")
-            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e) * mu[agent, j - 1])
+            H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j])) * mu[agent, j - 1])
+            # H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[j])) * mu[0, j - 1])
+        H = H.stack()
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
-    def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
+    def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor):
         H = []
         for j in range(1, self.num_tasks + 1):
-            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j]), e))
-        if self.loss_debug:
-            print(f"alloc H: {H}")
+            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j])))
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
-    #@tf.function
     def compute_loss(
             self,
             action_probs: tf.Tensor,
@@ -148,35 +179,20 @@ class Agent:
             ini_value: tf.Tensor,
             ini_values_i: tf.Tensor,
             agent: tf.int32,
-            lam: tf.float32,
-            chi: tf.float32,
-            mu: tf.Tensor,
-            e: tf.float32,
-            c: tf.float32) -> tf.Tensor:
+            mu: tf.Tensor) -> tf.Tensor:
         """Computes the combined actor-critic loss."""
 
-        H = self.compute_H(ini_value, ini_values_i, agent, lam, chi, mu, e, c)
-        print(f"returns: {returns.shape}, H shape: {H.shape}")
+        H = self.compute_H(ini_value, ini_values_i, agent, mu)
         advantage = tf.matmul(returns - values, H)
-        print(f"advantage shape: {advantage.shape}")
         action_log_probs = tf.math.log(action_probs)
         actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
 
         critic_loss = huber_loss(values, returns)
-
-        # print(f'shape of action_log_probs:, {action_log_probs.get_shape()}')
-        # print(f'shape of H:, {H.get_shape()}')
-        # print(f'shape of advantage:, {advantage.get_shape()}')
-        # print(f'shape of actor_loss:, {actor_loss.get_shape()}')
-        # print(f'shape of critic_loss:, {critic_loss.get_shape()}')
-
         return actor_loss + critic_loss
 
     def compute_alloc_loss(self, ini_values: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
-        H = self.compute_alloc_H(ini_values, chi, mu, e)
+        H = self.compute_alloc_H(ini_values, chi, mu)
         alloc_loss = tf.math.reduce_sum(H * tf.math.reduce_sum(mu * ini_values))
-        if self.loss_debug:
-            print(f"alloc loss: {alloc_loss}")
         return alloc_loss
 
     def run_episode(
@@ -184,12 +200,13 @@ class Agent:
             initial_state: tf.Tensor,
             env_index: tf.int32,
             max_steps: tf.int32,
-            model: tf.keras.Model) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+            model: tf.keras.Model):
         """Runs a single episode to collect training data."""
 
-        action_probs = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
-        values = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
-        rewards = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
+        action_probs = tf.TensorArray(dtype=tf.float32, size=max_steps)
+        values = tf.TensorArray(dtype=tf.float32, size=max_steps)
+        rewards = tf.TensorArray(dtype=tf.float32, size=max_steps)
+        mask = tf.TensorArray(dtype=tf.int32, size=max_steps)
         initial_state_shape = initial_state.shape
         state = initial_state
 
@@ -211,14 +228,12 @@ class Agent:
             action_probs = action_probs.write(t, action_probs_t[0, action])
 
             # Apply action to the environment to get next state and reward
-            state, reward, done = self.tf_env_step(state, action, env_index)
-            # reward = tf.squeeze(reward)
+            state, reward, done = self.tf_env_step(action, env_index)
 
             state.set_shape(initial_state_shape)
-            # print(f'state: {state}')
 
-            # Store reward
             rewards = rewards.write(t, reward)
+            mask = mask.write(t, 1)
 
             if tf.cast(done, tf.bool):
                 break
@@ -226,75 +241,78 @@ class Agent:
         action_probs = action_probs.stack()
         values = values.stack()
         rewards = rewards.stack()
+        mask = mask.stack()
+        return action_probs, values, rewards, mask
 
-        # Reset the task score at the end of each episode
-        for ii in range(self.num_agents):
-            self.env_reset(ii)
-
-        return action_probs, values, rewards
-
-    #@tf.function
-    # todo instead of looking up the initial state within the train step we need to pass in a tensor
-    #  of initial states
+    @tf.function
     def train_step(
             self,
-            optimizer: tf.keras.optimizers.Optimizer,
-            gamma: tf.float32,
+            initial_states: tf.Tensor,
             max_steps_per_episode: tf.int32,
-            lam: tf.float32,
-            chi: tf.float32,
             mu: tf.Tensor,
-            e: tf.float32,
-            c: tf.float32) -> [tf.Tensor, tf.Tensor]:
+            *models) -> [tf.Tensor, tf.Tensor]:
 
-        num_models = len(self.models)
-        action_probs_l = []
-        values_l = []
-        rewards_l = []
-        returns_l = []
+        action_probs_l = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+        values_l = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+        rewards_l = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+        returns_l = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+        masks_l = tf.TensorArray(dtype=tf.int32, size=self.num_agents)
 
+        idx = tf.constant(0, dtype=tf.int32)
         with tf.GradientTape() as tape:
-            for i in tf.range(num_models):
-                initial_state = tf.constant(self.envs[i].reset(), dtype=tf.float32)
-
+            for model in models:
                 # Run an episode
-                action_probs, values, rewards = self.run_episode(
-                    initial_state, i, max_steps_per_episode)
-                #print(f"rewards: {rewards}")
+                action_probs, values, rewards, mask = self.run_episode(
+                    initial_states[idx], idx, max_steps_per_episode, model)
 
                 # Get expected rewards
-                returns = self.get_expected_returns(rewards, gamma, False)
+                returns = self.get_expected_returns(rewards)
 
                 # Append tensors to respective lists
-                action_probs_l.append(action_probs)
-                values_l.append(values)
-                rewards_l.append(rewards)
-                returns_l.append(returns)
-            ini_values = tf.convert_to_tensor([x[0, :] for x in values_l])
-            loss_l = []
+                action_probs_l = action_probs_l.write(idx, action_probs)
+                values_l = values_l.write(idx, values)
+                rewards_l = rewards_l.write(idx, rewards)
+                returns_l = returns_l.write(idx, returns)
+                masks_l = masks_l.write(idx, mask)
+                idx += tf.constant(1, dtype=tf.int32)
 
-            for i in range(num_models):
+            action_probs_l = action_probs_l.stack()
+            values_l = values_l.stack()
+            rewards_l = rewards_l.stack()
+            returns_l = returns_l.stack()
+            masks_l = masks_l.stack()
+            ini_values = values_l[:, 0, :]
+
+           # print("shapes")
+           # print("action probs: ", action_probs_l.shape)
+           # print("values ", values_l.shape)
+           # print("rewards ", rewards_l.shape)
+           # print("returns ", returns_l.shape)
+           # # print("masks ", masks_l.shape)
+           # print("ini values ", ini_values.shape)
+
+            loss_l = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
+
+            for i in tf.range(self.num_agents):
                 # Get loss
-                values = values_l[i]
-                returns = returns_l[i]
+                mask = masks_l[i]
+                _, values = tf.dynamic_partition(values_l[i], mask, 2)
+                _, returns = tf.dynamic_partition(returns_l[i], mask, 2)
+                _, probs = tf.dynamic_partition(action_probs_l[i], mask, 2)
                 ini_values_i = ini_values[i]
-                loss = self.compute_loss(action_probs_l[i], values, returns, ini_values, ini_values_i, i, lam, chi, mu, e, c)
-                loss_l.append(loss)
-                # print(f'ini_values for model#{i}: {ini_values_i}')
-                # print(f'loss value for model#{i}: {loss}')
-                # print(f'returns for model#{i}: {returns[0]}')
-
+                loss = self.compute_loss(probs, values, returns, ini_values, ini_values_i, i, mu)
+                loss_l = loss_l.write(i, loss)
+            loss_l = loss_l.stack()
         # compute the gradient from the loss vector
-        vars_l = [m.trainable_variables for m in self.models]
+        vars_l = [m.trainable_variables for m in models]
         grads_l = tape.gradient(loss_l, vars_l)
 
         # Apply the gradients to the model's parameters
         grads_l_f = [x for y in grads_l for x in y]
         vars_l_f = [x for y in vars_l for x in y]
-        optimizer.apply_gradients(zip(grads_l_f, vars_l_f))
-        episode_reward_l = [tf.math.reduce_sum(rewards_l[i]) for i in range(num_models)]
+        self.opt.apply_gradients(zip(grads_l_f, vars_l_f))
 
-        return episode_reward_l[0], ini_values
+        return rewards_l, ini_values
 
 
 

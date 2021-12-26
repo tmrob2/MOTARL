@@ -39,7 +39,6 @@ class MORLTAP:
         self.entropy_coef = entropy_coef
         self.seed = seed
         self.opt = tf.keras.optimizers.Adam(learning_rate=self.lr)
-        self.opt2 = tf.keras.optimizers.Adam(learning_rate=self.lr2)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
         self.num_frames_per_proc = num_frames_per_proc
         self.num_procs = num_procs
@@ -185,7 +184,7 @@ class MORLTAP:
             action_logits_t_x_agents = tf.squeeze(action_logits_t_x_agents)
             # actions = tf.random.categorical(action_logits_t, num_samples=1, dtype=tf.int32)
             actions = self.collect_actions(action_logits_t_x_agents)
-            selected_actions = selected_actions.write(i, actions)  # todo reminder that we might need to do a transpose later on
+            selected_actions = selected_actions.write(i, actions)
             state, reward_, done_ = self.tf_env_step(actions)
             state.set_shape(state_shape)
             mask = tf.constant(1.0, dtype=tf.float32) - tf.cast(done_, dtype=tf.float32)

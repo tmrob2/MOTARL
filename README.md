@@ -4,7 +4,7 @@ Framework to support learned task allocation to a group of agents
 cooperating to complete a set fo tasks. The framework supports two 
 scenarios. 
 * Agent cooperation to complete tasks in a non-interacting environment
-* Agent cooperation to complete tasks in in an environment where agents interact with each other
+* Agent cooperation to complete tasks in an environment where agents interact with each other
 
 Tasks are formulated as deterministic finite automata (DFA). Agents then
 learn how to complete the tasks in parallel, i.e. there is no restriction
@@ -12,8 +12,8 @@ for tasks to be completed in sequence. At the same time an allocation
 function approximation is also learned which contributes a deterministic
 task allocation to an agent.
 
-Agents are modelled using an Actor-Critic model with the addition of an 
-LSTM cell to learn task sequencing. 
+Agents are modelled using an Actor-Critic model with the (optional) addition of an 
+LSTM cell to learn sub-task sequencing better. 
 
 ## Installation
 
@@ -23,7 +23,7 @@ Install project with ```pip3 install -e .``` from project root directory.
 A series of ```gym.Env``` environments will be installed which inherit from
 the ```gym-minigrid``` environment originally found at:
 https://github.com/maximecb/gym-minigrid. Additional environments can be found 
-in ```a2c_team_tf/envs```, and wrappers in ```a2c_team_tf/utils/obs_wrapper.py```.
+in ```a2c_team_tf/envs```, and wrappers in ```a2c_team_tf/utils/env_utils/_obs_wrapper.py```.
 
 Requirements: 
 * TensorFlow 2.x
@@ -52,6 +52,18 @@ are a number of challenges to overcome, including, how the agents learn
 to resolve conflicts such as moving to same square, or trying to pick up 
 the same object. This script can be found in ```/examples/minigrid_mult_task.py```
 
+## Specifying Tasks
+
+Tasks are specified using DFA. As we consider multitask allocation for concurrent tasks
+we are actually interested in the cross product DFA. The base class for the product DFA (xDFA)
+and DFA can be found in ```a2c_team_tf/utils/dfa.py```.
+
+There are a number of ways to specify a DFA. The most important thing to note is how the transition 
+function for the DFA is calculated. To determine the next state the DFA uses 
+```self.next(data, agent)```. Here data could be anything, a ```gym.Env```, or a dictionary
+of attributes for example. It is general enough to describe what ever events which need to be calculated
+for task progress.
+
 ## Tests
 
 To understand the mechanics of the implementation there are a number of tests
@@ -75,4 +87,14 @@ recurrent network layers which separates into a deep actor network, and critic
 network respectively. The number of action in the actor output layer is 
 defined using the ```env.action_space.n```. The number of critic outputs
 is the number of tasks + 1 (agent cost/reward value).
+
+## Visualisation
+
+Given some learned model, a rendering of the learned allocation policy can 
+be run using ```a2c_team_tf/utils/visualisation.py```. 
+
+Data can be captured asynchronously while training the actor-critic model 
+and stored in ```.csv``` format. This ```.csv``` file can be tranformed 
+into charts with render function ```--plot``` arg when running the 
+visualisation script. 
 
