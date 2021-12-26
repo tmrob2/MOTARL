@@ -23,7 +23,7 @@ Install project with ```pip3 install -e .``` from project root directory.
 A series of ```gym.Env``` environments will be installed which inherit from
 the ```gym-minigrid``` environment originally found at:
 https://github.com/maximecb/gym-minigrid. Additional environments can be found 
-in ```a2c_team_tf/envs```, and wrappers in ```a2c_team_tf/utils/env_utils/obs_wrapper.py```.
+in ```a2c_team_tf/envs```, and wrappers in ```a2c_team_tf/utils/obs_wrapper.py```.
 
 Requirements: 
 * TensorFlow 2.x
