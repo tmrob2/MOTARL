@@ -64,6 +64,50 @@ function for the DFA is calculated. To determine the next state the DFA uses
 of attributes for example. It is general enough to describe what ever events which need to be calculated
 for task progress.
 
+An example of DFA construction can be found in ```/examples/cartpole_ex.py```.
+States of the DFA can be described using a class object which inherits the 
+```DFAStates``` class. 
+```python
+class MoveToPos(DFAStates, ABC):
+    def __init__(self):
+        self.init = "I"
+        self.position = "P"
+        self.fail = "F"
+```
+A transition function, in the context of ```CartPole-v0``` which specifies the
+cart going left 0.5 units, can be specified as follows:
+```python
+def go_left_to_pos(data, _):
+    if data['state'][0] < -0.5 and not data['done']:
+        return "P"
+    elif data['done']:
+        return "F"
+    else:
+        return "I"
+```
+The data object which the function takes as an input is a dictionary, in this
+case, with attributes: 
+```python
+data = {"state": _, "reward": _, "done": _}
+```
+The DFA can be constructed with a funtion, or scripted, as follows
+```python
+def make_move_left_to_pos():
+    dfa = DFA(start_state="I", acc=["P"], rej=["F"])
+    dfa.states = MoveToPos()
+    dfa.add_state(dfa.states.init, go_left_to_pos)
+    dfa.add_state(dfa.states.position, finished_move)
+    dfa.add_state(dfa.states.fail, failed)
+    return dfa
+```
+Finally a cross product DFA which incorporates a number of tasks can be constructed
+using
+```python
+left = make_move_to_left_pos()
+...
+dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[right, left], agent=agent) for agent in range(num_agents)]
+```
+
 ## Tests
 
 To understand the mechanics of the implementation there are a number of tests

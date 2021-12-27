@@ -18,6 +18,6 @@ class CartPoleDefault(CartPoleEnv):
 class CartPoleHeavyLong(CartPoleEnv):
     def __init__(self):
         super().__init__()
-        self.theta_threshold_radians = 30 * 2 * math.pi / 360
-        self.masscart = 1.1
+        self.theta_threshold_radians = 35 * 2 * math.pi / 360
+        self.masscart = 1.2
         self.length = 0.6

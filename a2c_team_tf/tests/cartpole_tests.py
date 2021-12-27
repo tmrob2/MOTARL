@@ -88,7 +88,7 @@ left = make_move_left_to_pos()
 
 num_agents = 2
 num_tasks = 2
-dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[right, left], agent=agent) for agent in range(num_agents)]
+dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(right), copy.deepcopy(left)], agent=agent) for agent in range(num_agents)]
 
 num_actions = envs[0].action_space.n  # 2
 num_hidden_units = 128
@@ -141,31 +141,33 @@ action_probs, values, rewards, mask = agent.run_episode(initial_state, agent_idx
 # # print("r shape: ", r_.shape)
 # kappa is the allocation parameter tensor
 kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
+# kappa = tf.Variable([0., 1., 1., 0.], dtype=tf.float32)
 # mu is the allocation probability based on kappa
-mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=1)
+# mu = tf.constant([[0., 1.] ,[1., 0.]], dtype=tf.float32)
 # episodes reward is a deque FILO deque structure which
 episodes_reward = collections.deque(maxlen=min_episodes_criterion)
 # data writer, to store the data
-data_writer = AsyncWriter('data-cartpole', num_agents, num_tasks)
+data_writer = AsyncWriter('data-cartpole-learning', 'data-cartpole-alloc', num_agents, num_tasks)
+print("mu ", mu)
 with tqdm.trange(100) as t:
     for i in t:
         initial_states = agent.get_initial_states()
         rewards_l, ini_values = agent.train_step(initial_states, max_steps_per_episode, mu, *models)
         #if i % 5 == 0:
         #    agent.render_episode(max_steps_per_episode, *models)
-        #print("episode rewards ", tf.reshape(episode_rewards, [-1]).numpy())
-        #with tf.GradientTape() as tape:
-        #    mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-        #    # print("mu: ", mu)
-        #    alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
-        #kappa_grads = tape.gradient(alloc_loss, kappa)
-        #processed_grads = [-0.001 * g for g in kappa_grads]
-        #kappa.assign_add(processed_grads)
+        with tf.GradientTape() as tape:
+            mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+            print("mu ", mu)
+            alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
+        kappa_grads = tape.gradient(alloc_loss, kappa)
+        processed_grads = [-0.001 * g for g in kappa_grads]
+        kappa.assign_add(processed_grads)
         summed_rewards = tf.reduce_sum(rewards_l, 1)
         print("summed rewards ", tf.reshape(summed_rewards, [-1]).numpy())
         episode_reward = np.around(tf.reshape(summed_rewards, [-1]).numpy(), decimals=2)
         episodes_reward.append(episode_reward)
         running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
-        data_writer.write(episode_reward)
+        data_writer.write({'learn': running_reward, 'alloc': mu.numpy()})
         t.set_description(f"Epsiode: {i}")
         t.set_postfix(running_reward=running_reward)

@@ -119,7 +119,11 @@ agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
                 recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key)
 
-data_writer = AsyncWriter('data-4x4-lstm-ma', num_agents, num_tasks)
+data_writer = AsyncWriter(
+    fname_learning='data-4x4-lstm-ma-learning',
+    fname_alloc='data-4x4-lstm-ma-alloc',
+    num_agents=num_agents,
+    num_tasks=num_tasks)
 
 ############################################################################
 # TRAIN AGENT SCRIPT

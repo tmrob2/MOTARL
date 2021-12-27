@@ -70,8 +70,8 @@ envs.append(make_env('CartPole-heavy-long-v0', 0, seed + 10000, False))
 
 # Set seed for experiment reproducibility
 
-tf.random.set_seed(seed)
-np.random.seed(seed)
+# tf.random.set_seed(seed)
+# np.random.seed(seed)
 
 # Small epsilon value for stabilizing division operations
 eps = np.finfo(np.float32).eps.item()
@@ -86,7 +86,7 @@ left = make_move_left_to_pos()
 
 num_agents = 2
 num_tasks = 2
-dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[right, left], agent=agent) for agent in range(num_agents)]
+dfas = [CrossProductDFA(num_tasks=num_tasks, dfas=[copy.deepcopy(right), copy.deepcopy(left)], agent=agent) for agent in range(num_agents)]
 
 num_actions = envs[0].action_space.n  # 2
 num_hidden_units = 128
@@ -113,7 +113,11 @@ alpha2 = 0.001
 agent = Agent(envs=envs, dfas=dfas, e=e, c=c, chi=chi, lam=lam, gamma=gamma,
               one_off_reward=one_off_reward, num_tasks=num_tasks, num_agents=num_agents)
 
-data_writer = AsyncWriter('data-cartpole', num_agents, num_tasks)
+data_writer = AsyncWriter(
+    fname_learning='data-cartpole-learning',
+    fname_alloc='data-cartpole-alloc',
+    num_agents=num_agents,
+    num_tasks=num_tasks)
 
 ############################################################################
 # TRAIN AGENT SCRIPT
@@ -129,15 +133,23 @@ with tqdm.trange(max_episodes) as t:
         initial_states = agent.get_initial_states()
         rewards, ini_values = \
             agent.train_step(initial_states, max_steps_per_episode, mu, *models)
+        if i % 50 == 0 and i > 0:
+            with tf.GradientTape() as tape:
+                mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+                alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
+            kappa_grads = tape.gradient(alloc_loss, kappa)
+            processed_grads = [-0.001 * g for g in kappa_grads]
+            kappa.assign_add(processed_grads)
         # Calculate the episode rewards
         episode_reward = np.around(
             tf.reshape(tf.reduce_sum(rewards, 1), [-1]).numpy(), decimals=2)
         episodes_reward.append(episode_reward)
         running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
-        data_writer.write(episode_reward)
+        data_writer.write({'learn': running_reward, 'alloc': mu.numpy()})
         if i % 500 == 0:
             agent.render_episode(max_steps_per_episode, *models)
-        t.set_description(f"Epsiode: {i}")
+            print("mu \n", mu)
+        t.set_description(f"Episode: {i}")
         t.set_postfix(running_reward=running_reward)
 
         if all(x > 195 for x in running_reward[::3]) and all(x > e for x in running_reward[1::3]) \

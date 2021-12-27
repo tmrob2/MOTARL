@@ -10,6 +10,10 @@ import copy
 import click
 import matplotlib.pyplot as plt
 
+# TODO this script is very clunky, it needs to know the DFAs used, the library used,
+#  the saved tensorflow models, the openAI-gym environments, data filenames etc
+#  - make selecting all of these options easier
+
 # path
 path = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', 'saved_models'))
 
@@ -92,25 +96,14 @@ agent = MORLTAP(envs=[], models=models, num_agents=num_agents, num_tasks=num_tas
 @click.option('--render/--no-render', default=True)
 @click.option('--plot/--no-plot', default=True)
 @click.option('--frames', type=int, default=10)
-def render(render, frames, plot):
+@click.option('--fname', default=None)
+def render(render, frames, plot, fname):
     if render:
         max_steps = 50
         for _ in range(frames):
             r_init_state = agent.render_reset()
             r_init_state = tf.expand_dims(tf.expand_dims(r_init_state, 1), 2)
             agent.render_episode(r_init_state, max_steps, *models)
-    if plot:
-        data = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data'))
-        df = pd.read_csv(f'{data}/data-4x4-lstm.csv', delimiter=' ')
-        # plt.style.use('_mpl-gallery')
-        x = np.arange(0, df.shape[0], 1)
-        y1 = df.iloc[:, 0].to_numpy()
-        y2 = df.iloc[:, 1].to_numpy()
-        y3 = df.iloc[:, 2].to_numpy()
-        fig, ax = plt.subplots()
-        ax.plot(x, y2, x, y3, x, y1, linewidth=0.5)
-        ax.set(ylim=(0, 1.0), yticks=np.arange(0, 1.1, 0.1))
-        plt.show()
 
 if __name__ == '__main__':
     render()

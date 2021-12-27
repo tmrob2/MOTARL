@@ -60,10 +60,10 @@ class Agent:
                 np.array(done, np.int32))
 
     def render_episode(self, max_steps, *models):
-        state = self.get_initial_states()
+        initial_state = self.get_initial_states()
+        state = [initial_state[i] for i in range(self.num_agents)]
         # state_shape = initial_states.shape
         for _ in tf.range(max_steps):
-            state_store_tensor = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
             dones = []
             for i, model in enumerate(models):
                 # generate a policy according to the model and act out the trajectory
@@ -73,8 +73,7 @@ class Agent:
                 action = tf.random.categorical(action_logits, 1)[0, 0]
                 state_i, _, done = self.tf_env_step(action, i)
                 dones.append(tf.cast(done, tf.bool).numpy())
-                state_store_tensor = state_store_tensor.write(i, state_i)
-            state = state_store_tensor.stack()
+                state[i] = state_i
             if all(dones):
                 break
 
@@ -157,19 +156,26 @@ class Agent:
         _, y = X.get_shape()
         H = tf.TensorArray(dtype=tf.float32, size=self.num_tasks + 1)
         H = H.write(0, self.lam * self.df(Xi[0]))
-        #H = H.write(0, self.lam * self.df(X[0]))
         for j in range(1, y):
             # print(f"mu_{agent}{j -1 }: {mu[agent, j - 1]}")
             H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j])) * mu[agent, j - 1])
             # H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[j])) * mu[0, j - 1])
         H = H.stack()
+        #tf.print("H ", H)
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
-    def compute_alloc_H(self, X: tf.Tensor, chi: tf.float32, mu: tf.Tensor):
-        H = []
-        for j in range(1, self.num_tasks + 1):
-            H.append(chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j])))
-        return tf.expand_dims(tf.convert_to_tensor(H), 1)
+    def compute_alloc_H(self, X: tf.Tensor, mu: tf.Tensor, task: tf.int32):
+        return self.chi * self.dh(tf.math.reduce_sum(mu[:, task - 1] * X[:, task]))
+
+    @tf.function
+    def compute_alloc_loss(self, ini_values: tf.Tensor, mu: tf.Tensor):
+        loss = tf.constant(0.0, dtype=tf.float32)
+        for task in tf.range(1, self.num_tasks + 1):
+            h = self.compute_alloc_H(ini_values, mu, task)
+            agent_ini_val_x_alloc = tf.reduce_sum(tf.transpose(ini_values[:, task]) * mu[:, task - 1])
+            alloc_loss_task_j = h * agent_ini_val_x_alloc
+            loss += alloc_loss_task_j
+        return loss
 
     def compute_loss(
             self,
@@ -189,11 +195,6 @@ class Agent:
 
         critic_loss = huber_loss(values, returns)
         return actor_loss + critic_loss
-
-    def compute_alloc_loss(self, ini_values: tf.Tensor, chi: tf.float32, mu: tf.Tensor, e: tf.float32):
-        H = self.compute_alloc_H(ini_values, chi, mu)
-        alloc_loss = tf.math.reduce_sum(H * tf.math.reduce_sum(mu * ini_values))
-        return alloc_loss
 
     def run_episode(
             self,
@@ -282,14 +283,6 @@ class Agent:
             returns_l = returns_l.stack()
             masks_l = masks_l.stack()
             ini_values = values_l[:, 0, :]
-
-           # print("shapes")
-           # print("action probs: ", action_probs_l.shape)
-           # print("values ", values_l.shape)
-           # print("rewards ", rewards_l.shape)
-           # print("returns ", returns_l.shape)
-           # # print("masks ", masks_l.shape)
-           # print("ini values ", ini_values.shape)
 
             loss_l = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
 
