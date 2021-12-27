@@ -13,13 +13,13 @@ class ActorCritic(tf.keras.Model):
         :param name
         """
         super().__init__()
-        self.common = layers.Dense(hidden_units, activation="relu")
+        self.fc1 = layers.Dense(hidden_units, activation="relu")
         self.actor = layers.Dense(n_actions)
         self.critic = layers.Dense(num_tasks + 1)  # tasks + the agent
         self.model_name = name
 
     def __call__(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
-        x = self.common(inputs)
+        x = self.fc1(inputs)
         return self.actor(x), self.critic(x)
 
 

@@ -32,6 +32,9 @@ Requirements:
 * OpenAI Gym
 * Python 3.5+
 
+For the teamgrid example to work, the project below is also required:
+* https://github.com/mila-iqia/teamgrid
+
 ## Examples
 
 There are two example implentation found in ```/examples``` 
