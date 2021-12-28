@@ -25,10 +25,8 @@ class MoveToPos(DFAStates, ABC):
         self.fail = "F"
 
 def go_left_to_pos(data, _):
-    if data['state'][0] < - 0.1 / 2 and not data['done']:
+    if data['state'][0] < - 0.1 / 2:
         return "P"
-    elif data['done']:
-        return "F"
     else:
         return "I"
 
@@ -80,7 +78,7 @@ print(envs[0].observation_space)
 
 step_rew0 = 15  # step reward threshold
 
-one_off_reward = 10.0  # one-off reward
+one_off_reward = 20.0  # one-off reward
 task_prob0 = 0.8  # the probability threhold of archieving the above task
 
 right = make_move_to_pos_dfa()
@@ -150,19 +148,19 @@ episodes_reward = collections.deque(maxlen=min_episodes_criterion)
 # data writer, to store the data
 data_writer = AsyncWriter('data-cartpole-learning', 'data-cartpole-alloc', num_agents, num_tasks)
 print("mu ", mu)
-with tqdm.trange(100) as t:
+with tqdm.trange(10) as t:
     for i in t:
         initial_states = agent.get_initial_states()
         rewards_l, ini_values = agent.train_step(initial_states, max_steps_per_episode, mu, *models)
         #if i % 5 == 0:
-        #    agent.render_episode(max_steps_per_episode, *models)
-        with tf.GradientTape() as tape:
-            mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-            print("mu ", mu)
-            alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
-        kappa_grads = tape.gradient(alloc_loss, kappa)
-        processed_grads = [-0.001 * g for g in kappa_grads]
-        kappa.assign_add(processed_grads)
+        # agent.render_episode(max_steps_per_episode, *models)
+        # with tf.GradientTape() as tape:
+        #     mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+        #     print("mu ", mu)
+        #     alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
+        # kappa_grads = tape.gradient(alloc_loss, kappa)
+        # processed_grads = [-0.001 * g for g in kappa_grads]
+        # kappa.assign_add(processed_grads)
         summed_rewards = tf.reduce_sum(rewards_l, 1)
         print("summed rewards ", tf.reshape(summed_rewards, [-1]).numpy())
         episode_reward = np.around(tf.reshape(summed_rewards, [-1]).numpy(), decimals=2)

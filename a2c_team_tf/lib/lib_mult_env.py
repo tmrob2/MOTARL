@@ -42,6 +42,9 @@ class Agent:
         # update the task xDFA
         data = {"state": state_new, "reward": step_reward, "done": done}
         self.dfas[agent].next(data)
+        # print("state", state_new)
+        #if agent == 1:
+        #    print(f"agent ({agent}) ", self.dfas[agent].progress)
 
         # agent-task rewards
         task_rewards = self.dfas[agent].rewards(self.one_off_reward)
@@ -76,7 +79,6 @@ class Agent:
                 state[i] = state_i
             if all(dones):
                 break
-
 
     def env_reset(self, agent):
         state = self.envs[agent].reset()
@@ -157,11 +159,8 @@ class Agent:
         H = tf.TensorArray(dtype=tf.float32, size=self.num_tasks + 1)
         H = H.write(0, self.lam * self.df(Xi[0]))
         for j in range(1, y):
-            # print(f"mu_{agent}{j -1 }: {mu[agent, j - 1]}")
             H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[:, j])) * mu[agent, j - 1])
-            # H = H.write(j, self.chi * self.dh(tf.math.reduce_sum(mu[:, j - 1] * X[j])) * mu[0, j - 1])
         H = H.stack()
-        #tf.print("H ", H)
         return tf.expand_dims(tf.convert_to_tensor(H), 1)
 
     def compute_alloc_H(self, X: tf.Tensor, mu: tf.Tensor, task: tf.int32):

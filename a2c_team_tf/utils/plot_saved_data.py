@@ -6,7 +6,7 @@ import pandas as pd
 
 data = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data'))
 figures = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..', 'figures'))
-dfname = "data-cartpole"
+dfname = "experiment-cartpole-learning"
 title = "RL data"
 df = pd.read_csv(f'{data}/{dfname}.csv', delimiter=',', header=None, names=["A1", "A1T1", "A1T2", "A2", "A2T1", "A2T2"])
 x = np.arange(0, df.shape[0], 1)
