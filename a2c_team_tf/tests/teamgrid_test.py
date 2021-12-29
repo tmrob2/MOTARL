@@ -1,7 +1,4 @@
-import collections
 import copy
-
-import gym
 import numpy as np
 import tensorflow as tf
 import tqdm

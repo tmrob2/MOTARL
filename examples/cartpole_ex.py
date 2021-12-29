@@ -25,14 +25,14 @@ class MoveToPos(DFAStates, ABC):
         self.fail = "F"
 
 def go_left_to_pos(data, _):
-    if data['state'][0] <= -0.5 and -45.0 < math.degrees(data['state'][2]) < 45.0:
+    if data['state'][0] <= -0.5 and -180.0 < math.degrees(data['state'][2]) < .0:
         return "P"
     elif not -45.0 < math.degrees(data['state'][2]) < 45.0:
         return "F"
     else:
         return "I"
 
-def go_right(data, _):
+def go_right_to_pos(data, _):
     if data['state'][0] > .6 and -45. < math.degrees(data['state'][2]) < 45.:
         return "P"
     elif not -45.0 < math.degrees(data['state'][2]) < 45.0:
@@ -49,7 +49,7 @@ def failed(data, _):
 def make_move_to_pos_dfa():
     dfa = DFA(start_state="I", acc=["P"], rej=["F"])
     dfa.states = MoveToPos()
-    dfa.add_state(dfa.states.init, go_right)
+    dfa.add_state(dfa.states.init, go_right_to_pos)
     dfa.add_state(dfa.states.position, finished_move)
     dfa.add_state(dfa.states.fail, failed)
     return dfa
@@ -109,7 +109,7 @@ running_reward = 0
 ## No discount
 gamma = 1.00
 alpha1 = 0.0001
-alpha2 = 0.01
+alpha2 = 0.0001
 learning_rate_theta = tf.keras.optimizers.schedules.ExponentialDecay(
     initial_learning_rate=alpha1,
     decay_steps=10000,
@@ -141,12 +141,14 @@ with tqdm.trange(max_episodes) as t:
         initial_states = agent.get_initial_states()
         rewards, ini_values = \
             agent.train_step(initial_states, max_steps_per_episode, mu, *models)
-        if i % 50 == 0 and i > 0:
+        if i % 5 == 0 and i > 0:
             with tf.GradientTape() as tape:
                 mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
                 alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
             kappa_grads = tape.gradient(alloc_loss, kappa)
+            print("kappa grads", kappa_grads)
             processed_grads = [-alpha2 * g for g in kappa_grads]
+            # print('processed grads', processed_grads)
             kappa.assign_add(processed_grads)
             mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
         # Calculate the episode rewards
@@ -159,7 +161,7 @@ with tqdm.trange(max_episodes) as t:
             agent.render_episode(max_steps_per_episode, *models)
             print("mu \n", mu)
         t.set_description(f"Episode: {i}")
-        t.set_postfix(running_reward=running_reward)
+        t.set_postfix(running_reward=running_reward, alloc_loss=np.around(tf.reshape(mu, [-1]).numpy(), decimals=4))
 
         running_tasks = np.reshape(running_reward, [num_agents, num_tasks + 1])
         running_tasks_ = running_tasks[:, 1:]

@@ -43,8 +43,8 @@ class Agent:
         data = {"state": state_new, "reward": step_reward, "done": done}
         self.dfas[agent].next(data)
         # print("state", state_new)
-        #if agent == 1:
-        #    print(f"agent ({agent}) ", self.dfas[agent].progress)
+        # if agent == 1:
+        #     print(f"agent ({agent}) ", self.dfas[agent].progress)
 
         # agent-task rewards
         task_rewards = self.dfas[agent].rewards(self.one_off_reward)
@@ -127,14 +127,14 @@ class Agent:
     def df(self, x: tf.Tensor) -> tf.Tensor:
         """derivative of mean squared error"""
         if tf.less_equal(x, self.c):
-            return 2 * (x - self.c)
+            return 2 * (self.c - x)
         else:
             return tf.convert_to_tensor(0.0)
 
     def dh(self, x: tf.Tensor) -> tf.Tensor:
         # print(f"x: {x}, e: {e}")
         if tf.less_equal(x, self.e):
-            return 2 * (x - self.e)
+            return 2 * (self.e - x)
         else:
             return tf.convert_to_tensor(0.0)
 
@@ -190,10 +190,10 @@ class Agent:
         H = self.compute_H(ini_value, ini_values_i, agent, mu)
         advantage = tf.matmul(returns - values, H)
         action_log_probs = tf.math.log(action_probs)
-        actor_loss = tf.math.reduce_sum(action_log_probs * advantage)
+        actor_loss = -tf.math.reduce_sum(action_log_probs * advantage)
 
         critic_loss = huber_loss(values, returns)
-        return actor_loss + critic_loss
+        return actor_loss - critic_loss
 
     def run_episode(
             self,

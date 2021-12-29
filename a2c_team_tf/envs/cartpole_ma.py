@@ -10,9 +10,13 @@ from gym.envs.classic_control.cartpole import CartPoleEnv
 class CartPoleDefault(CartPoleEnv):
     def __init__(self):
         super().__init__()
-        self.theta_threshold_radians = 17 * 2 * math.pi / 360
-        self.masscart = 1.0
-        self.length = 0.5
+        #self.theta_threshold_radians = 17 * 2 * math.pi / 360
+        #self.masscart = 1.0
+        #self.length = 0.5
+
+    def step(self, action):
+        state, _, done, info = CartPoleEnv.step(self, action)
+        return state, -1, done, info
 
 
 class CartPoleHeavyLong(CartPoleEnv):
