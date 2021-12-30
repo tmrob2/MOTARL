@@ -125,23 +125,3 @@ class MultObjNoGoal5x5(MultObjNoGoal):
 class MultObjNoGoal4x4(MultObjNoGoal):
     def __init__(self):
         super().__init__(size=4, numKeys=1, numBalls=1)
-
-class MultObj4x4ActBonus(MultObjNoGoal):
-    def __init__(self):
-        self.counts = {}
-        super().__init__(size=4, numKeys=1, numBalls=1)
-
-    def step(self, action):
-        obs, reward, done, info = MultObjNoGoal.step(self, action)
-        tup = (tuple(self.agent_pos), self.agent_dir, action)
-        # Get the count for this (s, a) pair
-        pre_count = 0
-        if tup in self.counts:
-            pre_count = self.counts[tup]
-
-        # update the count for this state action pair
-        new_count = pre_count + 1
-        self.counts[tup] = new_count
-        bonus = 1 / math.sqrt(new_count)
-        reward += bonus
-        return obs, reward, done, info

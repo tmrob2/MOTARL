@@ -1,4 +1,6 @@
 import copy
+
+import gym
 import numpy as np
 from typing import Tuple, List
 import tensorflow as tf
@@ -7,9 +9,10 @@ from a2c_team_tf.utils.env_utils import make_env
 
 
 class MORLTAP:
-    def __init__(self, envs, models, num_agents,
+    def __init__(self, envs: List[List[gym.Env]], models, num_agents,
                  num_tasks, xdfas, one_off_reward,
                  e, c, chi, lam,
+                 observation_space, action_space,
                  gamma=1.0, lr=1e-4, lr2=1e-4, entropy_coef=0.001,
                  seed=None, num_procs=10, num_frames_per_proc=100,
                  recurrence=1, max_eps_steps=100, env_key=None, flatten_env=False):
@@ -19,18 +22,20 @@ class MORLTAP:
         self.envs: ParallelEnv = ParallelEnv(
                 envs,
                 xdfas,
+                observation_space,
+                action_space,
                 one_off_reward,
                 num_agents,
                 seed)
         if env_key:
-            self.renv = make_env(
+            self.renv = [make_env(
                 env_key=env_key,
                 max_steps_per_episode=max_eps_steps,
                 seed=seed,
-                apply_flat_wrapper=flatten_env)
+                apply_flat_wrapper=flatten_env) for _ in range(num_agents)]
         self.models = models
         self.num_tasks = num_tasks
-        self.dfas = xdfas
+        self.dfas = [copy.deepcopy(xdfas[0][i]) for i in range(self.num_agents)]
         self.one_off_reward = one_off_reward
         self.e, self.c, self.chi, self.lam = e, c, chi, lam
         self.lr = lr
@@ -47,88 +52,80 @@ class MORLTAP:
         assert num_frames_per_proc % recurrence == 0
 
     def render_reset(self):
-        if self.seed:
-            self.renv.seed(self.seed)
-        state = self.renv.reset()
-        # reset the product DFA
-        [d.reset() for d in self.dfas[0]]
-        # initial_state = np.append(state, np.array(self.dfas.progress, dtype=np.float32))
-        initial_state = np.array([np.append(state[k], self.dfas[0][k].progress) for k in range(self.num_agents)], dtype=np.float32)
-        return initial_state
+        initial_states = []
+        for agent in range(self.num_agents):
+            if self.seed:
+                self.renv[agent].seed(self.seed)
+            state = self.renv[agent].reset()
+            # reset the product DFA
+            [d.reset() for d in self.dfas]
+            # initial_state = np.append(state, np.array(self.dfas.progress, dtype=np.float32))
+            initial_states.append(np.append(state, np.array(self.dfas[agent].progress, dtype=np.float32)))
+        return initial_states
 
     def tf_render_reset(self):
         return tf.numpy_function(self.render_reset, [], [tf.float32])
 
-    def call_models(self, state: tf.Tensor, *args):
-        actions_logits_x_agents = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
-        values_x_agents = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
-        ix = tf.constant(0, dtype=tf.int32)
-        for model in args:
-            actions_logits, values = model(state[ix])
-            actions_logits_x_agents = actions_logits_x_agents.write(ix, actions_logits)
-            values_x_agents = values_x_agents.write(ix, values)
-            ix += tf.constant(1, dtype=tf.int32)
-        actions_logits_x_agents = actions_logits_x_agents.stack()
-        values_x_agents = values_x_agents.stack()
-        return actions_logits_x_agents, values_x_agents
-
     def reset(self):
-        states = []
-        states.append(self.envs.reset())
-        return np.array(states, dtype=np.float32)
+        return np.array(self.envs.reset(), dtype=np.float32)
 
     def tf_reset2(self):
         return tf.numpy_function(self.reset, [], [tf.float32])
 
-    def render_env_step(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def render_env_step(self, action: np.array, agent: np.int32) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Returns state, reward, done flag given an action"""
-        state, reward, done, info = self.renv.step(action)
+        state, reward, done, info = self.renv[agent].step(action)
         # where we define the DFA steps
-        [self.dfas[0][k].next(self.renv) for k in range(self.num_agents)]
-        task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
-        agent_reward = [0] * self.num_agents
-        if all(d.done() for d in self.dfas[0]):
-            # Assign the agent reward
+        self.dfas[agent].next(self.renv[agent])
+        task_rewards = self.dfas[agent].rewards(self.one_off_reward)
+        agent_reward = 0
+        if self.dfas[agent].done():
             done = True
         else:
-            # agent_reward = reward
             done = False
         rewards_ = np.array([agent_reward] + task_rewards)
-        state_ = np.array([np.append(state[k], self.dfas[0][k].progress) for k in range(self.num_agents)])
+        state_ = np.append(state, np.array(self.dfas[agent].progress, dtype=np.float32))
         state_ = np.expand_dims(state_, 1)
+        state_ = state_.transpose()
         return (
             state_.astype(np.float32),
             np.array(rewards_, np.float32),
             np.array(done, np.int32))
 
-    def tf_render_env_step(self, action: tf.Tensor) -> List[tf.Tensor]:
-        return tf.numpy_function(self.render_env_step, [action], [tf.float32, tf.float32, tf.int32])
+    def tf_render_env_step(self, action: tf.int32, agent: tf.int32) -> List[tf.Tensor]:
+        return tf.numpy_function(self.render_env_step, [action, agent], [tf.float32, tf.float32, tf.int32])
 
-    def env_step(self, actions: np.array):
+    def env_step(self, actions: np.array, agent: np.int32):
         actions = actions.transpose()
-        state, reward, done = self.envs.step(actions)
-        state = state.transpose(1, 0, 2)
+        state, reward, done = self.envs.step(actions, agent)
         if self.recurrent:
-            state = np.expand_dims(state, 2)
+            state = np.expand_dims(state, 1)
         return state.astype(np.float32), reward.astype(np.float32), done.astype(np.int32)
 
-    def tf_env_step(self, actions: tf.Tensor) -> List[tf.Tensor]:
-        return tf.numpy_function(self.env_step, [actions], [tf.float32, tf.float32, tf.int32])
+    def tf_env_step(self, actions: tf.Tensor, agent: tf.int32) -> List[tf.Tensor]:
+        return tf.numpy_function(self.env_step, [actions, agent], [tf.float32, tf.float32, tf.int32])
 
-    def render_episode(self, initial_state: tf.Tensor, max_steps: tf.int32, *args):
-        state = initial_state
+    def render_episode(self, initial_state: List[tf.Tensor], max_steps: tf.int32, *models):
+        states = initial_state
         # initial_state_shape = initial_state.shape
         for _ in tf.range(max_steps):
-            self.renv.render('human')
-            # Run the model to get an action probability distribution
-            action_logits_t, _ = self.call_models(state, *args)
-            if self.recurrent:
-                action_logits_t = tf.squeeze(action_logits_t, axis=1)
-            actions = self.collect_actions(action_logits_t)
-            # Apply the action to the environment to get the next state and reward
-            state, rewards, done = self.tf_render_env_step(actions)
-            state = tf.expand_dims(state, 1)
-            if tf.cast(done, tf.bool):
+            states_ = []
+            dones = [False] * self.num_agents
+            for agent in range(self.num_agents):
+                self.renv[agent].render('human')
+                # Run the model to get an action probability distribution
+                action_logits_t, _ = models[agent](states[agent])
+                if self.recurrent:
+                    action_logits_t = tf.squeeze(action_logits_t, axis=1)
+                actions = tf.random.categorical(action_logits_t, 1, dtype=tf.int32)
+                # Apply the action to the environment to get the next state and reward
+                state, rewards, done = self.tf_render_env_step(actions, agent)
+                state = tf.expand_dims(state, 1)
+                states_.append(state)
+                if tf.cast(done, tf.bool):
+                    dones.append(True)
+            states = states_
+            if all(dones):
                 break
 
     def collect_actions(self, action_logits: tf.Tensor) -> tf.Tensor:
@@ -145,7 +142,7 @@ class MORLTAP:
 
 
     @tf.function
-    def collect_batch(self, initial_obs: tf.Tensor, log_reward: tf.Tensor, *args):
+    def collect_batch(self, initial_obs: tf.Tensor, log_reward: tf.Tensor, models):
         """Collects rollouts and computes advantages
         The expected shape of log_rewards is (samples, num_agents, tasks + 1)
         Runs several environments concurrently, the next actions are computed in a batch
@@ -154,7 +151,7 @@ class MORLTAP:
 
         Expected shapes:
         T - timesteps, A - agents, S - samples, F - features
-        actions - (T, A, S)
+        actions - (T, S)
         observations - (T, S, A, F)
         values - (T, A, S, tasks + 1)
         rewards - (T, S, A, tasks + 1)
@@ -176,8 +173,9 @@ class MORLTAP:
         state_shape = initial_obs.shape
         log_reward_counter = tf.constant(0, dtype=tf.int32)
         for i in tf.range(self.num_frames_per_proc):
+            for model in models:
             observations = observations.write(i, state)
-            action_logits_t_x_agents, value_x_agents = self.call_models(state, *args)
+            action_logits_t_x_agents, value_x_agents = model(state)
             # value = self.critic(state)
             values = values.write(i, value_x_agents)
             # action_logits [samples, 1, actions] -> [samples, actions]
@@ -185,7 +183,7 @@ class MORLTAP:
             # actions = tf.random.categorical(action_logits_t, num_samples=1, dtype=tf.int32)
             actions = self.collect_actions(action_logits_t_x_agents)
             selected_actions = selected_actions.write(i, actions)
-            state, reward_, done_ = self.tf_env_step(actions)
+            state, reward_, done_ = self.tf_env_step(actions, agent)
             state.set_shape(state_shape)
             mask = tf.constant(1.0, dtype=tf.float32) - tf.cast(done_, dtype=tf.float32)
             masks = masks.write(i, mask)

@@ -26,11 +26,6 @@ register(
 )
 
 register(
-    id='Mult-obj-4x4-bonus-v0',
-    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObj4x4ActBonus'
-)
-
-register(
     id='Team-obj-5x5-v0',
     entry_point='a2c_team_tf.envs.team_grid_mult:TestEnv'
 )

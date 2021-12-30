@@ -14,9 +14,16 @@ class Point():
         return hash((self.x, self.y))
 
 class TestEnv(MiniGridEnv):
-    def __init__(self, num_agents=2, penalty=5, width=4, height=4, numKeys=1, numBalls=1):
+    """The major difference in this environment to the original
+    teamgrid environment is that world objects are a 'fountain' of
+    objects in that they infinitely resupply, rewards are negative, done is
+    always false as it is up to the DFAs to decide when the epsiode is over.
+
+    Note: An important point in using this environment in the context of object
+    fountains is that objects can contaminate the environment, and an agent can
+    essentially block other agents with objects maliciously"""
+    def __init__(self, num_agents=2, width=4, height=4, numKeys=1, numBalls=1):
         self.num_agents = num_agents
-        self.penalty = penalty
         self.num_keys = numKeys
         self.num_balls = numBalls
 
@@ -45,70 +52,83 @@ class TestEnv(MiniGridEnv):
         for i in range(self.num_agents):
             self.place_agent()
 
-    def detect_conflict(self, conflicting_positions):
-        tally = defaultdict(list)
-        for i, item in enumerate(conflicting_positions):
-            if item is not None:
-                tally[item].append(i)
-        return ((key, locs) for key, locs in tally.items() if len(locs) > 1)
-
     def step(self, actions):
-        # I guess actions are a vprint(dones)ector now
-        conflicting_positions = [None] * self.num_agents
-        # conflict positions looks like: {(x,y): [a_1,a_2,...,a_k]}
-        object_pickup_conflict = [None] * self.num_agents
-        # conflict when objects are pickup up in the same time-step by multiple agents
-        object_drop_conflict = [None] * self.num_agents
-        rewards = [0] * self.num_agents
-        # conflict when an agent attempts to drop a non-overlapping object
+        # Each agent needs to produce an action
+        assert len(actions) == len(self.agents)
+
+        self.step_count += 1
+        rewards = [0] * len(self.agents)
+
+        # For each agent
         for agent_idx, agent in enumerate(self.agents):
-            # Get the contents of the cell in front of the agent, do not actually move the agents
-            # just get a preview of what they are going to do.
+            # Get the position in front of the agent
             fwd_pos = agent.front_pos
+
+            # Get the contents of the cell in front of the agent
             fwd_cell = self.grid.get(*fwd_pos)
-            if actions[agent_idx] == self.actions.forward:
-                if fwd_cell is None or fwd_cell.can_overlap():
-                    conflicting_positions[agent_idx] = Point(fwd_pos[0], fwd_pos[1])
-                elif fwd_cell.type == 'wall':
-                    rewards[agent_idx] += 10
-            elif actions[agent_idx] == self.actions.pickup:
+
+            # Get the action for this agent
+            action = actions[agent_idx]
+
+            # Rotate left
+            if action == self.actions.left:
+                rewards[agent_idx] -= 1
+                agent.dir -= 1
+                if agent.dir < 0:
+                    agent.dir += 4
+
+            # Rotate right
+            elif action == self.actions.right:
+                rewards[agent_idx] -= 1
+                agent.dir = (agent.dir + 1) % 4
+
+            # Move forward
+            elif action == self.actions.forward:
+                rewards[agent_idx] -= 1
+                if fwd_cell == None or fwd_cell.can_overlap():
+                    self.grid.set(*agent.cur_pos, None)
+                    self.grid.set(*fwd_pos, agent)
+                    agent.cur_pos = fwd_pos
+
+            # Done action (not used by default)
+            elif action == self.actions.wait:
+                pass
+
+            # Toggle/activate an object
+            elif action == self.actions.toggle:
+                rewards[agent_idx] -= 1
+                if fwd_cell:
+                    fwd_cell.toggle(self, fwd_pos)
+
+            # Pick up an object
+            elif action == self.actions.pickup:
+                rewards[agent_idx] -= 1
                 if fwd_cell and fwd_cell.can_pickup():
                     if agent.carrying is None:
-                        object_pickup_conflict[agent_idx] = Point(fwd_pos[0], fwd_pos[1])
-            elif actions[agent_idx] == self.actions.drop:
-                if fwd_cell is None or fwd_cell.can_overlap():
-                    if agent.carrying:
-                        object_drop_conflict[agent_idx] = Point(fwd_pos[0], fwd_pos[1])
-        collisions = self.detect_conflict(conflicting_positions)
-        drop_violations = self.detect_conflict(object_drop_conflict)
-        pickup_violations = self.detect_conflict(object_pickup_conflict)
-        # collections is a generator, so we basically want to add some penalty to the penalty vector
-        # in every position that is returned from the k, v in collisions
-        info = {'collisions': [], 'drop_violations': [], 'pickup_violations': []}
-        for k, v in list(collisions):
-            # v will be a list of agents that collided with each other
-            # if v: print(f"colliding agents: {v}")
-            for agent in v:
-                rewards[agent] += self.penalty
-                info['collisions'].append(agent)
-        for k, v in list(drop_violations):
-            # if v: print(f"conflicting drops: {v}")
-            for agent in v:
-                rewards[agent] += self.penalty
-                info['drop_violations'].append(agent)
-        for k,v in list(pickup_violations):
-            # if v: print(f"conflicting pickups")
-            for agent in v:
-                rewards[agent] += self.penalty
-                info['pickup_violations'].append(agent)
-        # We assume in this test environment that there are no natural end points
-        # and there are no goals so done is always true
-        observation, step_rewards, _, _ = MiniGridEnv.step(self, actions)
+                        agent.carrying = fwd_cell
+                        agent.carrying.cur_pos = np.array([-1, -1])
+                        # self.grid.set(*fwd_pos, None)
+
+            # Drop an object
+            elif action == self.actions.drop:
+                rewards[agent_idx] -= 1
+                if not fwd_cell and agent.carrying:
+                    self.grid.set(*fwd_pos, agent.carrying)
+                    agent.carrying.cur_pos = fwd_pos
+                    agent.carrying = None
+
+            elif action == self.actions.wait:
+                rewards[agent_idx] -= 0
+
+            else:
+                assert False, "unknown action"
+
+        obss = self.gen_obss()
+
         obs_ = []
-        for img in observation:
+        for img in obss:
             obs_.append(img.flatten())
-        rewards = [rewards[idx] + r_ for idx, r_ in enumerate(step_rewards)]
-        return obs_, rewards, False, info
+        return obs_, rewards, False, {}
 
     def reset(self):
         obs = MiniGridEnv.reset(self)
