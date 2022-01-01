@@ -30,17 +30,17 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_steps_per_episode = 50
+max_steps_per_episode = 100
 max_episodes = 20000
 num_tasks = 2
 num_agents = 2
 # the number of CPUs to run in parallel when generating environments
-num_procs = min(multiprocessing.cpu_count(), 30)
+num_procs = min(multiprocessing.cpu_count(), 20)
 recurrence = 10
 recurrent = recurrence > 1
-alpha1 = 0.001
+alpha1 = 0.0001
 alpha2 = 0.001
-one_off_reward = 10.0
+one_off_reward = 100.0
 
 # construct DFAs
 class PickupObj(DFAStates, ABC):
@@ -77,8 +77,17 @@ def pickup_key(env: MultObjNoGoal4x4, _):
     else:
         return "I"
 
+def drop_key(env: MultObjNoGoal4x4, _):
+    if env.carrying:
+        if env.carrying.type == "key":
+            return "C"
+        else:
+            return "D"
+    else:
+        return "D"
+
 def finished_key(a, b):
-    return "C"
+    return "D"
 
 def finished_ball(a, b):
     return "D"
@@ -92,10 +101,11 @@ def make_pickupanddrop_ball_dfa():
     return dfa
 
 def make_pickup_key_dfa():
-    dfa = DFA(start_state="I", acc=["C"], rej=[])
+    dfa = DFA(start_state="I", acc=["D"], rej=[])
     states = PickupObj()
     dfa.add_state(states.init, pickup_key)
-    dfa.add_state(states.carrying, finished_key)
+    dfa.add_state(states.carrying, drop_key)
+    dfa.add_state(states.drop, finished_key)
     return dfa
 #############################################################################
 #  Construct Environments
@@ -104,12 +114,11 @@ envs = []
 for j in range(num_agents):
     agent_envs = []
     for i in range(num_procs):
-        eseed = seed
         agent_envs.append(
             make_env(
                 env_key=env_key,
                 max_steps_per_episode=max_steps_per_episode,
-                seed=seed + 100 * i + 1000 * (j + 1),
+                seed=seed,
                 apply_flat_wrapper=True))
     envs.append(agent_envs)
 #############################################################################
@@ -124,7 +133,7 @@ xdfas = [[
         agent=agent) for _ in range(num_procs)] for agent in range(num_agents)]
 observation_space = envs[0][0].observation_space
 action_space = envs[0][0].action_space.n
-e, c, chi, lam = 0.8 * one_off_reward, -10., 1.0, 1.0
+e, c, chi, lam = 0.8 * one_off_reward, -10., 1.0, .1
 
 # reward capture queues for tensorflow graph api
 q1 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.float32])
@@ -132,7 +141,7 @@ q2 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * 
 
 models = [ActorCrticLSTM(action_space, num_tasks, recurrent) for _ in range(num_agents)]
 log_rewards = tf.Variable(tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32))
-agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=10.0,
+agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=one_off_reward,
                 e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, seed=seed,
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
                 recurrence=recurrence, max_eps_steps=max_episodes, env_key=env_key,
@@ -168,7 +177,7 @@ with tqdm.trange(max_episodes) as t:
             running_rewards_x_agent = np.around(
                 np.array([np.mean(running_rewards[j], 0) for j in range(num_agents)]).flatten(), decimals=2)
             t.set_description(f"Episode {i}")
-            t.set_postfix(running_reward=running_rewards_x_agent)
+            t.set_postfix(running_reward=running_rewards_x_agent, loss=loss.numpy())
             data_writer.write({'learn': running_rewards_x_agent, 'alloc': mu.numpy()})
         # with tf.GradientTape() as tape:
         #     mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
@@ -176,7 +185,7 @@ with tqdm.trange(max_episodes) as t:
         #     alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
         # kappa_grads = tape.gradient(alloc_loss, kappa)
         # kappa.assign_add(alpha2 * kappa_grads)
-        if i % 2000 == 0 and i > 0:
+        if i % 500 == 0 and i > 0:
             r_init_state = agent.render_reset()
             r_init_state = [tf.expand_dims(tf.expand_dims(r_init_state[i], 0), 1) for i in range(num_agents)]
             agent.render_episode(r_init_state, max_steps_per_episode, *models)

@@ -37,7 +37,7 @@ For the teamgrid example to work, the project below is also required:
 
 ## Examples
 
-There are two example implentation found in ```/examples``` 
+Examples of different environment implementations can be found in ```/examples``` 
 
 The first is a cooperative ```CartPole-v0```
 environment, where there are N agents and M tasks to be completed. This is an
@@ -53,7 +53,7 @@ is an augmented version of the ```gym-minigrid``` environment
 In this setting there
 are a number of challenges to overcome, including, how the agents learn
 to resolve conflicts such as moving to same square, or trying to pick up 
-the same object. This script can be found in ```/examples/minigrid_mult_task.py```
+the same object. This script can be found in ```/examples/team_grid_ex.py```
 
 ## Specifying Tasks
 
@@ -140,8 +140,6 @@ is the number of tasks + 1 (agent cost/reward value).
 Given some learned model, a rendering of the learned allocation policy can 
 be run using ```a2c_team_tf/utils/visualisation.py```. 
 
-Data can be captured asynchronously while training the actor-critic model 
-and stored in ```.csv``` format. This ```.csv``` file can be tranformed 
-into charts with render function ```--plot``` arg when running the 
-visualisation script. 
+Data is stored asynchronously when training using ```AsyncWriter``` 
+from ```a2c_team_tf/utils/data_capture```.
 

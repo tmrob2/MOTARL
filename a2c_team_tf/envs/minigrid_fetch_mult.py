@@ -10,7 +10,7 @@ class MultObjNoGoal(MiniGridEnv):
         size=8,
         numKeys=1,
         numBalls=1,
-        penalty=30.
+        penalty=0.
     ):
         self.numKeys = numKeys
         self.numBalls = numBalls
@@ -18,7 +18,7 @@ class MultObjNoGoal(MiniGridEnv):
 
         super().__init__(
             grid_size=size,
-            max_steps=50,
+            max_steps=100,
             # Set this to True for maximum speed
             see_through_walls=True
         )
@@ -116,7 +116,7 @@ class MultObjNoGoal(MiniGridEnv):
 
         # Done action (not used by default)
         elif action == self.actions.done:
-            reward = 0.
+            reward -= 1.
 
         else:
             assert False, "unknown action"

@@ -75,14 +75,14 @@ def make_pickup_key_dfa():
 num_tasks = 2
 num_agents = 2
 recurrent = True
-num_procs = 30
+num_procs = 20
 seed = 123
 env_key = 'Mult-obj-4x4-v0'
-max_steps_per_episode = 50
+max_steps_per_episode = 100
 max_steps_per_update = 10
 recurrence = 10
 max_episode_steps = 2
-alpha1 = 0.0005
+alpha1 = 0.00001
 alpha2 = 0.001
 one_off_reward = 10.0
 e, c, mu, chi, lam = tf.constant([0.8 * one_off_reward], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
@@ -184,7 +184,7 @@ state = initial_states
 running_rewards = [collections.deque(maxlen=100) for _ in range(num_agents)]
 data_writer = AsyncWriter('minigrid-learning', 'minigrid-alloc', num_agents, num_tasks)
 
-with tqdm.trange(100000) as t:
+with tqdm.trange(200) as t:
     for i in t:
         state, loss, ini_values = agent.train(state, indices, mu, *models)
         # calculate queue length
@@ -203,7 +203,7 @@ with tqdm.trange(100000) as t:
         #     alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
         # kappa_grads = tape.gradient(alloc_loss, kappa)
         # kappa.assign_add(alpha2 * kappa_grads)
-        if i % 2000 == 0 and i > 0:
+        if i % 500 == 0 and i > 0:
             r_init_state = agent.render_reset()
             r_init_state = [tf.expand_dims(tf.expand_dims(r_init_state[i], 0), 1) for i in range(num_agents)]
             agent.render_episode(r_init_state, max_steps_per_episode, *models)

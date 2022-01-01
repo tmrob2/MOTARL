@@ -7,14 +7,15 @@ import tensorflow as tf
 from a2c_team_tf.utils.parallel_envs import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
 
+### EXPERIMENTAL LIBRARY FOR SHARED NON INTERACTING SPACES - CURRENTLY NOT WORKING CORRECTLY
 
 class MORLTAP:
     def __init__(self, envs: List[List[gym.Env]], num_agents,
                  num_tasks, xdfas, one_off_reward,
                  e, c, chi, lam,
                  observation_space, action_space,
-                 gamma=1.0, lr=1e-4, lr2=1e-4, entropy_coef=0.001,
-                 seed=None, num_procs=10, num_frames_per_proc=100,
+                 gamma=1.0, lr=1e-4, lr2=1e-4,
+                 seed=None, num_procs=10, num_frames_per_proc=10,
                  recurrence=1, max_eps_steps=100, env_key=None, flatten_env=False,
                  q1: tf.queue.FIFOQueue=None, q2: tf.queue.FIFOQueue=None, log_reward: tf.Variable=None):
         self.recurrent = recurrence > 1
@@ -26,7 +27,8 @@ class MORLTAP:
                 observation_space,
                 action_space,
                 one_off_reward,
-                num_agents)
+                num_agents,
+                seed)
         if env_key:
             self.renv = [make_env(
                 env_key=env_key,
@@ -40,7 +42,6 @@ class MORLTAP:
         self.lr = lr
         self.lr2 = lr2
         self.gamma = gamma
-        self.entropy_coef = entropy_coef
         self.seed = seed
         self.opt = tf.keras.optimizers.Adam(learning_rate=self.lr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
@@ -249,13 +250,13 @@ class MORLTAP:
     def df(self, x: tf.Tensor) -> tf.Tensor:
         """derivative mean squared error"""
         if tf.less_equal(x, self.c):
-            return 2 * (x - self.c)
+            return 2 * (self.c - x)
         else:
             return tf.convert_to_tensor(0.0)
 
     def dh(self, x: tf.Tensor) -> tf.Tensor:
         if tf.less_equal(x, self.e):
-            return 2 * (x - self.e)
+            return 2 * (self.e - x)
         else:
             return tf.convert_to_tensor(0.0)
 
@@ -302,13 +303,13 @@ class MORLTAP:
             loss += tf.reduce_mean(alloc_proc_loss_task_j)
         return loss
 
-    @tf.function
+    #@tf.function
     def update_loss(self,
                     observations: tf.Tensor,
                     actions: tf.Tensor,
                     masks: tf.Tensor, returns: tf.Tensor,
                     advantages: tf.Tensor,
-                    ii: tf.Tensor, *args):
+                    ii: tf.Tensor, *models):
         loss = tf.constant([0.0] * self.num_agents, dtype=tf.float32)
         for t in tf.range(self.recurrence):
             ix = ii + t
@@ -333,13 +334,18 @@ class MORLTAP:
             sb_obss_x_agents = tf.expand_dims(sb_obss_x_agents, 2)
             # print("mask ", sb_masks_x_agents.shape, "observations ", sb_obss_x_agents.shape)
             # Compute the actor and critic loss value for the respective agents
-            actions_logits_x_agents, values_x_agents = [], []
+            actions_logits_x_agents = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
+            values_x_agents = tf.TensorArray(dtype=tf.float32, size=self.num_agents)
             agent = tf.constant(0)
-            for model in args:
+            for model in models:
                 action_logits, values = model.call(sb_obss_x_agents[agent], sb_masks_x_agents[agent])
-                actions_logits_x_agents.append(action_logits)
-                values_x_agents.append(values)
+                actions_logits_x_agents = actions_logits_x_agents.write(agent, action_logits)
+                values_x_agents = values_x_agents.write(agent, values)
                 agent += tf.constant(1)
+
+            actions_logits_x_agents = actions_logits_x_agents.stack()
+            values_x_agents = values_x_agents.stack()
+
             value = tf.squeeze(values_x_agents)
             action_logits_t = tf.squeeze(actions_logits_x_agents)
             critic_loss = self.huber(value, sb_rets_x_agents)
@@ -351,8 +357,8 @@ class MORLTAP:
                 x = tf.range(ii.shape[0])
                 y = tf.transpose([x, actions_selected])
                 action_probs = tf.gather_nd(action_probs_t, indices=y)
-                actor_loss_agent = tf.math.reduce_mean(tf.math.log(action_probs) * sb_advs_x_agents[agent])
-                critic_loss_agent = tf.nn.compute_average_loss(critic_loss[agent])
+                actor_loss_agent = -tf.math.reduce_mean(tf.math.log(action_probs) * sb_advs_x_agents[agent])
+                critic_loss_agent = -tf.nn.compute_average_loss(critic_loss[agent])
                 loss_update = loss_update.write(agent, actor_loss_agent + critic_loss_agent)
             loss_update = loss_update.stack()
             loss += loss_update
@@ -360,7 +366,7 @@ class MORLTAP:
         return loss
 
 
-    @tf.function
+    # @tf.function
     def train_preprocess(self, initial_state: tf.Tensor, mu: tf.Tensor, *models) \
             -> [tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         """

@@ -3,7 +3,6 @@ import copy
 import math
 import gym
 import numpy as np
-import statistics
 import tensorflow as tf
 import tqdm
 from a2c_team_tf.utils.dfa import *
@@ -11,7 +10,6 @@ from a2c_team_tf.nets.base import ActorCritic
 from a2c_team_tf.lib.lib_mult_env import Agent
 from a2c_team_tf.utils.env_utils import make_env
 from a2c_team_tf.utils.data_capture import AsyncWriter
-from typing import Any, List, Sequence, Tuple
 from abc import ABC
 
 gym.logger.set_level(40)
@@ -126,7 +124,7 @@ data_writer = AsyncWriter(
 #############################################################################
 episodes_reward = collections.deque(maxlen=min_episodes_criterion)
 kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
-mu = tf.nn.softmax(kappa, axis=1)
+mu = tf.nn.softmax(kappa, axis=0)
 mu_thresh = np.ones([num_agents, num_tasks]) - np.ones([num_agents, num_tasks]) * 0.03
 
 with tqdm.trange(max_episodes) as t:
@@ -137,7 +135,7 @@ with tqdm.trange(max_episodes) as t:
             agent.render_episode(max_steps_per_episode, *models)
         if i % 20 == 0:
             with tf.GradientTape() as tape:
-                mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+                mu = tf.nn.softmax(kappa, axis=0)
                 alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
             kappa_grads = tape.gradient(alloc_loss, kappa)
             kappa.assign_add(alpha2 * kappa_grads)

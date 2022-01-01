@@ -52,6 +52,44 @@ class TestEnv(MiniGridEnv):
         for i in range(self.num_agents):
             self.place_agent()
 
+    def place_agent(
+        self,
+        top=None,
+        size=None,
+        dir=None,
+        color=None,
+        max_tries=math.inf,
+        agent_can_overlap=True
+    ):
+        """
+        Set the agent's starting point at an empty position in the grid
+        """
+
+        free_colors = COLOR_NAMES[:]
+        for agent in self.agents:
+            if agent.color in free_colors:
+                free_colors.remove(agent.color)
+
+        if color is None:
+            # Pick random agent color
+            if len(free_colors) == 0:
+                free_colors = COLOR_NAMES[:]
+            color = self._rand_elem(free_colors)
+
+        assert color in free_colors
+        ### An additional line so that agents can overlap and environments are not competitive
+        agent = Agent(color=color, can_overlap=agent_can_overlap)
+
+        pos = self.place_obj(agent, top, size, max_tries=max_tries)
+
+        if dir is None:
+            dir = self._rand_int(0, 4)
+        agent.dir = dir
+
+        self.agents.append(agent)
+
+        return pos
+
     def step(self, actions):
         # Each agent needs to produce an action
         assert len(actions) == len(self.agents)
@@ -107,7 +145,7 @@ class TestEnv(MiniGridEnv):
                     if agent.carrying is None:
                         agent.carrying = fwd_cell
                         agent.carrying.cur_pos = np.array([-1, -1])
-                        # self.grid.set(*fwd_pos, None)
+                        self.grid.set(*fwd_pos, None)
 
             # Drop an object
             elif action == self.actions.drop:
