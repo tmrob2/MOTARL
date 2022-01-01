@@ -9,15 +9,16 @@ class MultObjNoGoal(MiniGridEnv):
         self,
         size=8,
         numKeys=1,
-        numBalls=1
+        numBalls=1,
+        penalty=30.
     ):
         self.numKeys = numKeys
         self.numBalls = numBalls
-        self.counts = {}
+        self.penalty = penalty
 
         super().__init__(
             grid_size=size,
-            max_steps=5*size**2,
+            max_steps=50,
             # Set this to True for maximum speed
             see_through_walls=True
         )
@@ -59,7 +60,7 @@ class MultObjNoGoal(MiniGridEnv):
     def step(self, action):
         self.step_count += 1
 
-        reward = 0
+        reward = 0.
         done = False
 
         # Get the position in front of the agent
@@ -70,23 +71,29 @@ class MultObjNoGoal(MiniGridEnv):
 
         # Rotate left
         if action == self.actions.left:
+            reward -= 1.0
             self.agent_dir -= 1
             if self.agent_dir < 0:
                 self.agent_dir += 4
 
         # Rotate right
         elif action == self.actions.right:
+            reward -= 1.0
             self.agent_dir = (self.agent_dir + 1) % 4
 
         # Move forward
         elif action == self.actions.forward:
+            reward -= 1.0
             if fwd_cell == None or fwd_cell.can_overlap():
                 self.agent_pos = fwd_pos
             if fwd_cell != None and fwd_cell.type == 'lava':
                 done = True
+            if fwd_cell != None and fwd_cell.type == "wall":
+                reward -= self.penalty
 
         # Pick up an object
         elif action == self.actions.pickup:
+            reward -= 1.0
             if fwd_cell and fwd_cell.can_pickup():
                 if self.carrying is None:
                     self.carrying = fwd_cell
@@ -95,6 +102,7 @@ class MultObjNoGoal(MiniGridEnv):
 
         # Drop an object
         elif action == self.actions.drop:
+            reward -= 1.0
             if not fwd_cell and self.carrying:
                 self.grid.set(*fwd_pos, self.carrying)
                 self.carrying.cur_pos = fwd_pos
@@ -102,12 +110,13 @@ class MultObjNoGoal(MiniGridEnv):
 
         # Toggle/activate an object
         elif action == self.actions.toggle:
+            reward -= 1.0
             if fwd_cell:
                 fwd_cell.toggle(self, fwd_pos)
 
         # Done action (not used by default)
         elif action == self.actions.done:
-            pass
+            reward = 0.
 
         else:
             assert False, "unknown action"

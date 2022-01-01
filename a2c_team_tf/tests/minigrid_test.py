@@ -1,14 +1,15 @@
+import collections
 import copy
 import numpy as np
 import tensorflow as tf
 import tqdm
-
 from a2c_team_tf.nets.base import ActorCrticLSTM
 from a2c_team_tf.lib.tf2_a2c_base import MORLTAP
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.minigrid_fetch_mult import MultObjNoGoal4x4
 from a2c_team_tf.utils.env_utils import make_env
+from a2c_team_tf.utils.data_capture import AsyncWriter
 
 # what are the conceptual changes that need to be made
 # * the environments no longer contain a set of states for each of the agents
@@ -21,8 +22,9 @@ class PickupObj(DFAStates, ABC):
         self.init = "I"
         self.carrying = "C"
         self.drop = "D"
+        self.fail = "F"
 
-def pickup_ball(env: MultObjNoGoal4x4, agent):
+def pickup_ball(env: MultObjNoGoal4x4, _):
     if env.carrying:
         if env.carrying.type == "ball":
             return "C"
@@ -31,7 +33,7 @@ def pickup_ball(env: MultObjNoGoal4x4, agent):
     else:
         return "I"
 
-def drop_ball(env: MultObjNoGoal4x4, agent):
+def drop_ball(env: MultObjNoGoal4x4, _):
     if env.carrying:
         if env.carrying.type == "ball":
             return "C"
@@ -40,7 +42,7 @@ def drop_ball(env: MultObjNoGoal4x4, agent):
     else:
         return "D"
 
-def pickup_key(env: MultObjNoGoal4x4, agent):
+def pickup_key(env: MultObjNoGoal4x4, _):
     if env.carrying:
         if env.carrying.type == "key":
             return "C"
@@ -80,6 +82,9 @@ max_steps_per_episode = 50
 max_steps_per_update = 10
 recurrence = 10
 max_episode_steps = 2
+alpha1 = 0.0005
+alpha2 = 0.001
+one_off_reward = 10.0
 e, c, mu, chi, lam = tf.constant([0.8], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
 envs = []
 ball = make_pickupanddrop_ball_dfa()
@@ -103,18 +108,22 @@ for j in range(num_agents):
     envs.append(agent_envs)
 observation_space = envs[0][0].observation_space
 action_space = envs[0][0].action_space.n
+q1 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.float32])
+q2 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.int32])
 # generate a list of input samples for each agent and input this into the model
 models = [ActorCrticLSTM(action_space, num_tasks, recurrent) for _ in range(num_agents)]
-agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=1.0,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, seed=seed,
+log_rewards = tf.Variable(tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32))
+agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=10.0,
+                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, seed=seed,
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
                 recurrence=recurrence, max_eps_steps=max_episode_steps, env_key=env_key,
-                observation_space=observation_space, action_space=action_space, flatten_env=True)
+                observation_space=observation_space, action_space=action_space, flatten_env=True,
+                q1=q1, q2=q2, log_reward=log_rewards)
 
-# kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
-# mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
+mu = tf.nn.softmax(kappa, axis=0)
 initial_states = agent.tf_reset2()
-print("len initial states ", len(initial_states), " state shape ", initial_states[0].shape)
+print("len initial states ", initial_states.shape, " state shape ", initial_states[0].shape)
 initial_states_i = tf.expand_dims(initial_states[0], 1)
 #
 action_logits, value = models[0](initial_states_i)
@@ -141,11 +150,14 @@ action = tf.random.categorical(render_action_logits, 1, dtype=tf.int32)[0, 0].nu
 print("action: ", action)
 state, _, _, _ = agent.renv[0].step(action)
 state, reward, done = agent.tf_render_env_step(action, 0)
-agent.render_episode(r_init_state, 500, *models)
+# agent.render_episode(r_init_state, 5, *models)
 #
-log_rewards = tf.zeros([num_procs, num_tasks + 1], dtype=tf.float32)
-actions, observations, values, rewards, masks, state_, running_rewards, log_rewards = \
-      agent.collect_batch(initial_states, log_rewards, *models)
+# log_rewards = tf.Variable(tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32))
+#initial_states = agent.tf_reset2()
+#initial_states = tf.expand_dims(initial_states, 2)
+#actions, observations, values, rewards, masks, state_ = \
+#     agent.collect_batch(initial_states[0], models[0], 0)
+# print("log rewards ", log_rewards)
 # print("action shape ", actions.shape)
 # print("observations shape ", observations.shape)
 # print("values shape ", values.shape)
@@ -154,20 +166,47 @@ actions, observations, values, rewards, masks, state_, running_rewards, log_rewa
 # print("state shape ", state_.shape)
 # print("running rewards shape ", running_rewards.shape)
 # print("log rewards shape ", log_rewards.shape)
-# indices = agent.tf_1d_indices()
-# state = initial_states
-# # state, log_rewards, running_rewards, loss, ini_values = agent.train(state, log_rewards, indices, mu, *models)
 #
-# with tqdm.trange(10) as t:
-#     for i in t:
-#         state, log_rewards, running_rewards, loss, ini_values = agent.train(state, log_rewards, indices, mu, *models)
-#         with tf.GradientTape() as tape:
-#             mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-#             # print("mu: ", mu)
-#             alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
-#         kappa_grads = tape.gradient(alloc_loss, kappa)
-#         processed_grads = [-0.001 * g for g in kappa_grads]
-#         kappa.assign_add(processed_grads)
+indices = agent.tf_1d_indices()
+# agent.train_preprocess(initial_states, log_rewards, mu, *models)
+# #
+# state = initial_states
+# # agent.train(state, log_rewards, indices, mu, *models)
+# state, log_rewards, running_rewards, loss, ini_values = \
+#     agent.train(state, log_rewards, indices, mu, *models)
+# print(f"state {state.shape}, log_rewards {log_rewards.shape}, running_rewards: {running_rewards.shape}"
+#       f"loss: {loss.shape}, ini_values: {ini_values.shape}")
+# print(f"running rewards {running_rewards}")
+# #
+initial_states = agent.tf_reset2()
+initial_states = tf.expand_dims(initial_states, 2)
+state = initial_states
+running_rewards = [collections.deque(maxlen=100) for _ in range(num_agents)]
+data_writer = AsyncWriter('minigrid-learning', 'minigrid-alloc', num_agents, num_tasks)
+
+with tqdm.trange(100000) as t:
+    for i in t:
+        state, loss, ini_values = agent.train(state, indices, mu, *models)
+        # calculate queue length
+        for _ in range(agent.q1.size()):
+            index = agent.q2.dequeue()
+            value = agent.q1.dequeue()
+            running_rewards[index].append(value.numpy())
+        if all(len(x) >= 1 for x in running_rewards):
+            running_rewards_x_agent = np.around(np.array([np.mean(running_rewards[j], 0) for j in range(num_agents)]).flatten(), decimals=2)
+            t.set_description(f"Episode {i}")
+            t.set_postfix(running_reward=running_rewards_x_agent)
+            data_writer.write({'learn': running_rewards_x_agent, 'alloc': mu.numpy()})
+        # with tf.GradientTape() as tape:
+        #     mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+        #     # print("mu: ", mu)
+        #     alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
+        # kappa_grads = tape.gradient(alloc_loss, kappa)
+        # kappa.assign_add(alpha2 * kappa_grads)
+        if i % 2000 == 0 and i > 0:
+            r_init_state = agent.render_reset()
+            r_init_state = [tf.expand_dims(tf.expand_dims(r_init_state[i], 0), 1) for i in range(num_agents)]
+            agent.render_episode(r_init_state, max_steps_per_episode, *models)
 
 
 

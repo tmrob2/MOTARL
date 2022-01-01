@@ -136,6 +136,7 @@ mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
 agent_threshold = c
 mu_thresh = np.ones([num_agents, num_tasks]) - np.ones([num_agents, num_tasks]) * 0.03
 
+# todo update this example with the new test data
 with tqdm.trange(max_episodes) as t:
     for i in t:
         initial_states = agent.get_initial_states()

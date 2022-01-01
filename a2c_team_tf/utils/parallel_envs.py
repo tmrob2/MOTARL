@@ -8,7 +8,7 @@ import numpy as np
 from a2c_team_tf.utils.dfa import CrossProductDFA, DFA
 
 
-def worker(conn, env: gym.Env, one_off_reward, num_agents, seed=None):
+def worker(conn, env: gym.Env, one_off_reward, seed=None):
     while True:
         cmd, data, dfa = conn.recv() # removed task step count
         dfa: CrossProductDFA
@@ -18,8 +18,8 @@ def worker(conn, env: gym.Env, one_off_reward, num_agents, seed=None):
             dfa.next(env)
             # Compute the task rewards from the xDFA
             task_rewards = dfa.rewards(one_off_reward)
-            agent_reward = 0.0 if dfa.done() else -1.0
-            if dfa.done or env.step_count >= env.max_steps:
+            agent_reward = 0.0 if dfa.done() else reward
+            if dfa.done() or env.step_count >= env.max_steps:
                 # include a DFA reset
                 done = True
                 if seed:
@@ -98,15 +98,15 @@ class ParallelEnv(gym.Env):
         obs, reward, done, _ = self.envs[agent][0].step(actions[0])
         self.dfas[agent][0].next(self.envs[agent][0])
         # Compute the task rewards from the xDFA
-        agent_rewards = 0.0 if self.dfas[agent][0].done() else -1.0
+        agent_rewards = 0.0 if self.dfas[agent][0].done() else reward
         task_rewards = self.dfas[agent][0].rewards(self.one_off_reward)
 
-        if all(d.done() for d in self.dfas[agent]) or self.envs[agent][0].step_count >= self.envs[agent][0].max_steps:
+        if self.dfas[agent][0].done() or self.envs[agent][0].step_count >= self.envs[agent][0].max_steps:
             # include a DFA reset
             done = True
             if self.seed:
                 self.envs[agent][0].seed(self.seed)
-            [d.reset() for d in self.dfas[agent]]
+            self.dfas[agent][0].reset()
             obs = self.envs[agent][0].reset()
         else:
             done = False
@@ -115,7 +115,8 @@ class ParallelEnv(gym.Env):
         # Concatenate the environment state and the DFA progress states for each task
         obs_ = np.append(obs, np.array(self.dfas[agent][0].progress))
         results = list(zip(*[(obs_, reward_, done, self.dfas[agent][0])] + [local.recv() for local in self.locals[agent]]))
-        self.dfas = list(results[3])
+        # print("results \n ", results)
+        self.dfas[agent] = list(results[3])
         return np.array(results[0], dtype=np.float32), np.array(results[1], dtype=np.float32), np.array(results[2], np.int32)
 
     def render(self):
