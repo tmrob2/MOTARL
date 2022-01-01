@@ -110,11 +110,6 @@ running_reward = 0
 gamma = 1.00
 alpha1 = 0.0001
 alpha2 = 0.0001
-learning_rate_theta = tf.keras.optimizers.schedules.ExponentialDecay(
-    initial_learning_rate=alpha1,
-    decay_steps=10000,
-    decay_rate=.95
-)
 
 agent = Agent(envs=envs, dfas=dfas, e=e, c=c, chi=chi, lam=lam, gamma=gamma,
               one_off_reward=one_off_reward, num_tasks=num_tasks, num_agents=num_agents,
@@ -130,40 +125,31 @@ data_writer = AsyncWriter(
 # TRAIN AGENT SCRIPT
 #############################################################################
 episodes_reward = collections.deque(maxlen=min_episodes_criterion)
-kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
-mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-
-agent_threshold = c
+kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
+mu = tf.nn.softmax(kappa, axis=1)
 mu_thresh = np.ones([num_agents, num_tasks]) - np.ones([num_agents, num_tasks]) * 0.03
 
-# todo update this example with the new test data
 with tqdm.trange(max_episodes) as t:
     for i in t:
         initial_states = agent.get_initial_states()
-        rewards, ini_values = \
-            agent.train_step(initial_states, max_steps_per_episode, mu, *models)
-        if i % 5 == 0 and i > 0:
+        rewards_l, ini_values = agent.train_step(initial_states, max_steps_per_episode, mu, *models)
+        if i % 200 == 0:
+            agent.render_episode(max_steps_per_episode, *models)
+        if i % 20 == 0:
             with tf.GradientTape() as tape:
                 mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
                 alloc_loss = agent.compute_alloc_loss(ini_values, mu)  # alloc loss
             kappa_grads = tape.gradient(alloc_loss, kappa)
-            print("kappa grads", kappa_grads)
-            processed_grads = [-alpha2 * g for g in kappa_grads]
-            # print('processed grads', processed_grads)
-            kappa.assign_add(processed_grads)
-            mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-        # Calculate the episode rewards
-        episode_reward = np.around(
-            tf.reshape(tf.reduce_sum(rewards, 1), [-1]).numpy(), decimals=2)
+            kappa.assign_add(alpha2 * kappa_grads)
+        summed_rewards = tf.reduce_sum(rewards_l, 1)
+        if i % 10 == 0:
+            print("mu \n", mu)
+        episode_reward = np.around(tf.reshape(summed_rewards, [-1]).numpy(), decimals=2)
         episodes_reward.append(episode_reward)
         running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
         data_writer.write({'learn': running_reward, 'alloc': mu.numpy()})
-        if i % 500 == 0:
-            agent.render_episode(max_steps_per_episode, *models)
-            print("mu \n", mu)
-        t.set_description(f"Episode: {i}")
-        t.set_postfix(running_reward=running_reward, alloc_loss=np.around(tf.reshape(mu, [-1]).numpy(), decimals=4))
-
+        t.set_description(f"Epsiode: {i}")
+        t.set_postfix(running_reward=running_reward)
         running_tasks = np.reshape(running_reward, [num_agents, num_tasks + 1])
         running_tasks_ = running_tasks[:, 1:]
         mu_term = (mu > mu_thresh).numpy().astype(np.float32)

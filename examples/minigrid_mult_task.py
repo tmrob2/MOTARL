@@ -30,7 +30,7 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_epsiode_steps = 50
+max_steps_per_episode = 50
 max_episodes = 20000
 num_tasks = 2
 num_agents = 2
@@ -40,6 +40,8 @@ running_reward = 0
 num_procs = min(multiprocessing.cpu_count(), 30)
 recurrence = 10
 recurrent = recurrence > 1
+alpha1 = 0.001
+alpha2 = 0.001
 
 # construct DFAs
 class PickupObj(DFAStates, ABC):
@@ -99,9 +101,17 @@ def make_pickup_key_dfa():
 #  Construct Environments
 #############################################################################
 envs = []
-for i in range(num_procs):
-    eseed = seed
-    envs.append(make_env(env_key=env_key, max_steps_per_episode=max_epsiode_steps, apply_flat_wrapper=False))
+for j in range(num_agents):
+    agent_envs = []
+    for i in range(num_procs):
+        eseed = seed
+        agent_envs.append(
+            make_env(
+                env_key=env_key,
+                max_steps_per_episode=max_steps_per_episode,
+                seed=seed + 100 * i + 1000 * (j + 1),
+                apply_flat_wrapper=True))
+    envs.append(agent_envs)
 #############################################################################
 #  Initialise data structures
 #############################################################################
@@ -112,13 +122,22 @@ xdfas = [[
         num_tasks=num_tasks,
         dfas=[copy.deepcopy(obj) for obj in [key, ball]],
         agent=agent) for agent in range(num_agents)] for _ in range(num_procs)]
+observation_space = envs[0][0].observation_space
+action_space = envs[0][0].action_space.n
 e, c, chi, lam = 0.8, 0.85, 1.0, 1.0
-models = [ActorCrticLSTM(envs[0].action_space.n, num_tasks, recurrent) for _ in range(num_agents)]
-agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=100.0,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, lr2=0.005, seed=seed,
-                num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
-                recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key)
 
+# reward capture queues for tensorflow graph api
+q1 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.float32])
+q2 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.int32])
+
+models = [ActorCrticLSTM(action_space, num_tasks, recurrent) for _ in range(num_agents)]
+log_rewards = tf.Variable(tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32))
+agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=10.0,
+                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, seed=seed,
+                num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
+                recurrence=recurrence, max_eps_steps=max_episodes, env_key=env_key,
+                observation_space=observation_space, action_space=action_space, flatten_env=True,
+                q1=q1, q2=q2, log_reward=log_rewards)
 data_writer = AsyncWriter(
     fname_learning='data-4x4-lstm-ma-learning',
     fname_alloc='data-4x4-lstm-ma-alloc',
@@ -129,49 +148,43 @@ data_writer = AsyncWriter(
 # TRAIN AGENT SCRIPT
 #############################################################################
 episodes_reward = collections.deque(maxlen=min_episode_criterion)
-kappa = tf.Variable(np.full(num_agents * num_tasks, 1.0 / num_agents), dtype=tf.float32)
+running_rewards = [collections.deque(maxlen=100) for _ in range(num_agents)]
+initial_states = agent.tf_reset2()
+initial_states = tf.expand_dims(initial_states, 2)
+indices = agent.tf_1d_indices()
+kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
+mu = tf.nn.softmax(kappa, axis=1)
+
 with tqdm.trange(max_episodes) as t:
-    # get the initial state
-    state = agent.tf_reset2()
-    state = tf.squeeze(state)
-    state = tf.expand_dims(tf.transpose(state, perm=[1, 0, 2]), 2)
-    log_reward = tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32)
-    indices = agent.tf_1d_indices()
-    mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
     for i in t:
-        state, log_reward, running_reward, loss, ini_values = agent.train(state, log_reward, indices, mu, *models)
-        if i % 10 == 0:
-            with tf.GradientTape() as tape:
-                mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
-                alloc_loss = agent.update_alloc_loss(ini_values, mu)
-            kappa_grads = tape.gradient(alloc_loss, kappa)
-            processed_grads = [-agent.lr2 * g for g in kappa_grads]
-            kappa.assign_add(processed_grads)
-        t.set_description(f"Batch: {i}")
-        for reward in running_reward:
-            episodes_reward.append(reward.numpy().flatten())
-        if episodes_reward:
-            running_reward = np.around(np.mean(episodes_reward, 0), decimals=2)
-            data_writer.write(running_reward)
-            t.set_postfix(running_r=running_reward, loss=loss.numpy())
-        if i % 1000 == 0 and i > 0:
-            print("mu\n", mu)
-        if i % 200 == 0:
-            # render an episode
+        state, loss, ini_values = agent.train(state, indices, mu, *models)
+        # calculate queue length
+        for _ in range(agent.q1.size()):
+            index = agent.q2.dequeue()
+            value = agent.q1.dequeue()
+            running_rewards[index].append(value.numpy())
+        if all(len(x) >= 1 for x in running_rewards):
+            running_rewards_x_agent = np.around(
+                np.array([np.mean(running_rewards[j], 0) for j in range(num_agents)]).flatten(), decimals=2)
+            t.set_description(f"Episode {i}")
+            t.set_postfix(running_reward=running_rewards_x_agent)
+            data_writer.write({'learn': running_rewards_x_agent, 'alloc': mu.numpy()})
+        # with tf.GradientTape() as tape:
+        #     mu = tf.nn.softmax(tf.reshape(kappa, shape=[num_agents, num_tasks]), axis=0)
+        #     # print("mu: ", mu)
+        #     alloc_loss = agent.update_alloc_loss(ini_values, mu)  # alloc loss
+        # kappa_grads = tape.gradient(alloc_loss, kappa)
+        # kappa.assign_add(alpha2 * kappa_grads)
+        if i % 2000 == 0 and i > 0:
             r_init_state = agent.render_reset()
-            r_init_state = tf.expand_dims(tf.expand_dims(r_init_state, 1), 2)
-            agent.render_episode(r_init_state, max_epsiode_steps, *models)
-            # agent.renv.window.close()
-        if episodes_reward:
-            if running_reward[0] > reward_threshold and i >= min_episode_criterion:
-                break
-print("mu ", mu)
+            r_init_state = [tf.expand_dims(tf.expand_dims(r_init_state[i], 0), 1) for i in range(num_agents)]
+            agent.render_episode(r_init_state, max_steps_per_episode, *models)
 
 # Save the model(s)
 ix = 0
 for model in models:
     r_init_state = agent.render_reset()
-    r_init_state = tf.expand_dims(tf.expand_dims(r_init_state, 1), 2)
+    r_init_state = [tf.expand_dims(tf.expand_dims(r_init_state[i], 0), 1) for i in range(num_agents)]
     _ = model(r_init_state[ix])  # calling the model makes tells tensorflow the size of the model
     tf.saved_model.save(model, f"/home/tmrob2/PycharmProjects/MORLTAP/saved_models/agent{ix}_lstm_4x4_ma")
     ix += 1

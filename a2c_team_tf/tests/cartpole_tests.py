@@ -153,7 +153,7 @@ episodes_reward = collections.deque(maxlen=min_episodes_criterion)
 data_writer = AsyncWriter('data-cartpole-learning', 'data-cartpole-alloc', num_agents, num_tasks)
 print("mu ", mu)
 mu_thresh = np.ones([num_agents, num_tasks]) - np.ones([num_agents, num_tasks]) * 0.03
-with tqdm.trange(100000) as t:
+with tqdm.trange(max_episodes) as t:
     for i in t:
         initial_states = agent.get_initial_states()
         rewards_l, ini_values = agent.train_step(initial_states, max_steps_per_episode, mu, *models)
@@ -167,7 +167,6 @@ with tqdm.trange(100000) as t:
             kappa.assign_add(alpha2 * kappa_grads)
         summed_rewards = tf.reduce_sum(rewards_l, 1)
         if i % 10 == 0:
-            print("v_ini \n", ini_values)
             print("mu \n", mu)
         episode_reward = np.around(tf.reshape(summed_rewards, [-1]).numpy(), decimals=2)
         episodes_reward.append(episode_reward)
