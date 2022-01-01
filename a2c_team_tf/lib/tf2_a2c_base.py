@@ -302,6 +302,7 @@ class MORLTAP:
             loss += tf.reduce_mean(alloc_proc_loss_task_j)
         return loss
 
+    @tf.function
     def update_loss(self,
                     observations: tf.Tensor,
                     actions: tf.Tensor,
@@ -359,7 +360,7 @@ class MORLTAP:
         return loss
 
 
-    # @tf.function
+    @tf.function
     def train_preprocess(self, initial_state: tf.Tensor, mu: tf.Tensor, *models) \
             -> [tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         """

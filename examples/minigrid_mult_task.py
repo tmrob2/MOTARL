@@ -18,13 +18,13 @@ from a2c_team_tf.nets.base import ActorCrticLSTM
 from a2c_team_tf.lib.tf2_a2c_base import MORLTAP
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
-from a2c_team_tf.envs.team_grid_mult import TestEnv
+from a2c_team_tf.envs.minigrid_fetch_mult import MultObjNoGoal4x4
 from a2c_team_tf.utils.env_utils import make_env
 from a2c_team_tf.utils.data_capture import AsyncWriter
 import multiprocessing
 
 # Parameters
-env_key = 'Team-obj-5x5-v0'
+env_key = 'Mult-obj-4x4-v0'
 seed = 123
 max_steps_per_update = 10
 np.random.seed(seed)
@@ -34,14 +34,13 @@ max_steps_per_episode = 50
 max_episodes = 20000
 num_tasks = 2
 num_agents = 2
-reward_threshold = 0.9
-running_reward = 0
 # the number of CPUs to run in parallel when generating environments
 num_procs = min(multiprocessing.cpu_count(), 30)
 recurrence = 10
 recurrent = recurrence > 1
 alpha1 = 0.001
 alpha2 = 0.001
+one_off_reward = 10.0
 
 # construct DFAs
 class PickupObj(DFAStates, ABC):
@@ -49,28 +48,29 @@ class PickupObj(DFAStates, ABC):
         self.init = "I"
         self.carrying = "C"
         self.drop = "D"
+        self.fail = "F"
 
-def pickup_ball(env: TestEnv, agent):
-    if env.agents[agent].carrying:
-        if env.agents[agent].carrying.type == "ball":
+def pickup_ball(env: MultObjNoGoal4x4, _):
+    if env.carrying:
+        if env.carrying.type == "ball":
             return "C"
         else:
             return "I"
     else:
         return "I"
 
-def drop_ball(env: TestEnv, agent):
-    if env.agents[agent].carrying:
-        if env.agents[agent].carrying.type == "ball":
+def drop_ball(env: MultObjNoGoal4x4, _):
+    if env.carrying:
+        if env.carrying.type == "ball":
             return "C"
         else:
             return "D"
     else:
         return "D"
 
-def pickup_key(env: TestEnv, agent):
-    if env.agents[agent].carrying:
-        if env.agents[agent].carrying.type == "key":
+def pickup_key(env: MultObjNoGoal4x4, _):
+    if env.carrying:
+        if env.carrying.type == "key":
             return "C"
         else:
             return "I"
@@ -121,10 +121,10 @@ xdfas = [[
     CrossProductDFA(
         num_tasks=num_tasks,
         dfas=[copy.deepcopy(obj) for obj in [key, ball]],
-        agent=agent) for agent in range(num_agents)] for _ in range(num_procs)]
+        agent=agent) for _ in range(num_procs)] for agent in range(num_agents)]
 observation_space = envs[0][0].observation_space
 action_space = envs[0][0].action_space.n
-e, c, chi, lam = 0.8, 0.85, 1.0, 1.0
+e, c, chi, lam = 0.8 * one_off_reward, -10., 1.0, 1.0
 
 # reward capture queues for tensorflow graph api
 q1 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * num_agents + 1, dtypes=[tf.float32])
@@ -151,6 +151,7 @@ episodes_reward = collections.deque(maxlen=min_episode_criterion)
 running_rewards = [collections.deque(maxlen=100) for _ in range(num_agents)]
 initial_states = agent.tf_reset2()
 initial_states = tf.expand_dims(initial_states, 2)
+state = initial_states
 indices = agent.tf_1d_indices()
 kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
 mu = tf.nn.softmax(kappa, axis=1)

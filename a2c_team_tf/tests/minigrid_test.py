@@ -85,7 +85,7 @@ max_episode_steps = 2
 alpha1 = 0.0005
 alpha2 = 0.001
 one_off_reward = 10.0
-e, c, mu, chi, lam = tf.constant([0.8], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
+e, c, mu, chi, lam = tf.constant([0.8 * one_off_reward], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
 envs = []
 ball = make_pickupanddrop_ball_dfa()
 key = make_pickup_key_dfa()
