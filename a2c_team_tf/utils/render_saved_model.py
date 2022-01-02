@@ -1,14 +1,12 @@
 import os
-import pandas as pd
 import tensorflow as tf
-from a2c_team_tf.lib.tf2_a2c_base import MORLTAP
+from a2c_team_tf.lib.experimental.tf2_a2c_base import MORLTAP
 import numpy as np
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.team_grid_mult import TestEnv
 import copy
 import click
-import matplotlib.pyplot as plt
 
 # TODO this script is very clunky, it needs to know the DFAs used, the library used,
 #  the saved tensorflow models, the openAI-gym environments, data filenames etc

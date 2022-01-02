@@ -4,7 +4,7 @@ import gym
 import numpy as np
 from typing import Tuple, List
 import tensorflow as tf
-from a2c_team_tf.utils.parallel_envs import ParallelEnv
+from a2c_team_tf.utils.experimental.parallel_envs import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
 
 ### EXPERIMENTAL LIBRARY FOR SHARED NON INTERACTING SPACES - CURRENTLY NOT WORKING CORRECTLY
