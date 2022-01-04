@@ -4,15 +4,16 @@ from typing import Tuple, List
 import tensorflow as tf
 from a2c_team_tf.utils.parallel_envs_team import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
-
+import tensorflow_probability as tfp
 
 class MORLTAP:
-    def __init__(self, envs, models, num_agents,
+    def __init__(self, envs, num_agents,
                  num_tasks, xdfas, one_off_reward,
                  e, c, chi, lam,
-                 gamma=1.0, lr=1e-4, lr2=1e-4, entropy_coef=0.001,
-                 seed=None, num_procs=10, num_frames_per_proc=100,
-                 recurrence=1, max_eps_steps=100, env_key=None, flatten_env=False):
+                 gamma=1.0, lr=1e-4, lr2=1e-4, entropy_coef=0.01,
+                 use_entropy=False, seed=None, num_procs=10, num_frames_per_proc=100,
+                 recurrence=1, max_eps_steps=100, env_key=None,
+                 flatten_env=False, normalisation_coef=1.0):
         self.recurrent = recurrence > 1
         self.recurrence = recurrence
         self.num_agents = num_agents
@@ -21,6 +22,7 @@ class MORLTAP:
                 xdfas,
                 one_off_reward,
                 num_agents,
+                normalisation_coef,
                 seed)
         if env_key:
             self.renv = make_env(
@@ -28,7 +30,6 @@ class MORLTAP:
                 max_steps_per_episode=max_eps_steps,
                 seed=seed,
                 apply_flat_wrapper=flatten_env)
-        self.models = models
         self.num_tasks = num_tasks
         self.dfas = xdfas
         self.one_off_reward = one_off_reward
@@ -36,13 +37,12 @@ class MORLTAP:
         self.lr = lr
         self.lr2 = lr2
         self.gamma = gamma
-        self.entropy_coef = entropy_coef
+        self.entropy_coef = tf.constant(entropy_coef, dtype=tf.float32) if use_entropy else tf.constant(0.0, dtype=tf.float32)
         self.seed = seed
         self.opt = tf.keras.optimizers.Adam(learning_rate=self.lr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
         self.num_frames_per_proc = num_frames_per_proc
         self.num_procs = num_procs
-        self.log_episode_reward = tf.zeros([self.num_procs, self.num_tasks + 1], dtype=tf.float32)
         assert self.recurrent or self.recurrence == 1
         assert num_frames_per_proc % recurrence == 0
 
@@ -108,8 +108,7 @@ class MORLTAP:
         actions = actions.transpose()
         state, reward, done = self.envs.step(actions)
         state = state.transpose(1, 0, 2)
-        if self.recurrent:
-            state = np.expand_dims(state, 2)
+        state = np.expand_dims(state, 2)
         return state.astype(np.float32), reward.astype(np.float32), done.astype(np.int32)
 
     def tf_env_step(self, actions: tf.Tensor) -> List[tf.Tensor]:
@@ -122,8 +121,7 @@ class MORLTAP:
             self.renv.render('human')
             # Run the model to get an action probability distribution
             action_logits_t, _ = self.call_models(state, *args)
-            if self.recurrent:
-                action_logits_t = tf.squeeze(action_logits_t, axis=1)
+            action_logits_t = tf.squeeze(action_logits_t, axis=1)
             actions = self.collect_actions(action_logits_t)
             # Apply the action to the environment to get the next state and reward
             state, rewards, done = self.tf_render_env_step(actions)
@@ -142,7 +140,6 @@ class MORLTAP:
             actions = actions.write(idx, action_set)
         actions = actions.stack()
         return actions
-
 
     @tf.function
     def collect_batch(self, initial_obs: tf.Tensor, log_reward: tf.Tensor, *args):
@@ -260,15 +257,15 @@ class MORLTAP:
     def df(self, x: tf.Tensor) -> tf.Tensor:
         """derivative mean squared error"""
         if tf.less_equal(x, self.c):
-            return 2 * (self.c - x)
+            return 2 * (x - self.c)
         else:
             return tf.convert_to_tensor(0.0)
 
     def dh(self, x: tf.Tensor) -> tf.Tensor:
         if tf.less_equal(x, self.e):
-            return 2 * (self.e - x)
+            return 2 * (x - self.e)
         else:
-            return tf.convert_to_tensor(0.0)
+            return tf.convert_to_tensor([0.0])
 
     def computeH_proc_i(self, X: tf.Tensor, Xi: tf.Tensor, proc: tf.int32, agent: tf.int32, mu: tf.Tensor) -> tf.Tensor:
         # should be a relatively small calculation
@@ -297,7 +294,9 @@ class MORLTAP:
     def compute_alloc_H(self, X: tf.Tensor, mu: tf.Tensor, task: tf.int32):
         H_ = tf.TensorArray(dtype=tf.float32, size=self.num_procs)
         for proc in tf.range(self.num_procs):
-            H_ = H_.write(proc, self.compute_alloc_H_proc_i(X, mu, proc, task))
+            alloc_val = self.compute_alloc_H_proc_i(X, mu, proc, task)
+            # print("alloc val", alloc_val)
+            H_ = H_.write(proc, alloc_val)
         H_ = H_.stack()
         return H_
 
@@ -305,7 +304,8 @@ class MORLTAP:
     def update_alloc_loss(self, X: tf.Tensor, mu: tf.Tensor):
         loss = tf.constant(0.0, dtype=tf.float32)
         for task in tf.range(1, self.num_tasks + 1):
-            h = self.chi * self.compute_alloc_H(X, mu, task)  # return shape: (S, )
+            computed_val = self.compute_alloc_H(X, mu, task)
+            h = self.chi * computed_val  # return shape: (S, )
             # destroy flow
             h = tf.convert_to_tensor(h)
             agent_ini_val_x_alloc = tf.math.reduce_sum(tf.transpose(X[:, :, task]) * mu[:, task - 1])
@@ -313,7 +313,7 @@ class MORLTAP:
             loss += tf.reduce_mean(alloc_proc_loss_task_j)
         return loss
 
-    @tf.function
+    #@tf.function
     def update_loss(self,
                     observations: tf.Tensor,
                     actions: tf.Tensor,
@@ -337,12 +337,13 @@ class MORLTAP:
             sb_advs_x_agents = sb_advs_x_agents.stack()
             sb_rets_x_agents = sb_rets_x_agents.stack()
             # Construct the sub batch mask from experiences
-            mask = tf.expand_dims(tf.cast(tf.gather(masks, indices=ix), tf.bool), 1)
+            mask = tf.expand_dims(tf.gather(masks, indices=ix), 1)
             # Compute the actor and critic loss value for the respective agents
             actions_logits_x_agents, values_x_agents = [], []
             agent = tf.constant(0)
             for model in args:
-                action_logits, values = model.call(sb_obss_x_agents[agent], mask)
+                masked_inputs = tf.expand_dims(tf.squeeze(sb_obss_x_agents[agent]) * mask, 1)
+                action_logits, values = model.call(masked_inputs)
                 actions_logits_x_agents.append(action_logits)
                 values_x_agents.append(values)
                 agent += tf.constant(1)
@@ -354,18 +355,23 @@ class MORLTAP:
                 iz = self.tf_2d_indices(agent, ii.shape[0], indices=ix)
                 actions_selected = tf.gather_nd(actions, indices=iz)
                 action_probs_t = tf.nn.softmax(action_logits_t[agent])
+                entropy = self.entropy_coef * tf.reduce_mean(tfp.distributions.Categorical(logits=action_logits_t[agent]).entropy())
+                #tf.print("entropy shape ", entropy)
                 x = tf.range(ii.shape[0])
                 y = tf.transpose([x, actions_selected])
                 action_probs = tf.gather_nd(action_probs_t, indices=y)
-                actor_loss_agent = -tf.math.reduce_mean(tf.math.log(action_probs) * sb_advs_x_agents[agent])
+                actor_loss_agent = tf.math.reduce_mean(tf.math.log(action_probs) * sb_advs_x_agents[agent])
+                # entropy_raw = tf.nn.softmax_cross_entropy_with_logits(action_probs_t, action_logits_t[agent])
+                # entropy = self.entropy_coef * tf.reduce_mean(entropy_raw)
                 critic_loss_agent = tf.nn.compute_average_loss(critic_loss[agent])
-                loss_update = loss_update.write(agent, actor_loss_agent - critic_loss_agent)
+                #tf.print("entropy ", entropy, "agent_loss ", actor_loss_agent)
+                loss_update = loss_update.write(agent, actor_loss_agent + critic_loss_agent + entropy) #
             loss_update = loss_update.stack()
             loss += loss_update
         loss /= self.recurrence
         return loss
 
-    @tf.function
+    #@tf.function
     def train_preprocess(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor, mu: tf.Tensor, *args):
         # We require masks to know which tensor elements the model should ignore
         # We require values and returns for huber loss
@@ -386,7 +392,7 @@ class MORLTAP:
         obss = tf.transpose(obss, perm=[1, 2, 0, 3, 4])
         # # values/rewards/returns reshape: T x S x A x D -> A x S x T x D -> (A * S * T) x D
         # # values = tf.reshape(values, [values.shape[0] * values.shape[1] * values.shape[2], values.shape[3]])
-        returns = tf.reshape(returns, [self.num_agents, ii.shape[0] * self.num_frames_per_proc, self.num_tasks + 1])
+        returns = tf.reshape(returns, [self.num_agents, self.num_procs * self.num_frames_per_proc, self.num_tasks + 1])
         observations = tf.reshape(obss, [self.num_agents, self.num_procs * self.num_frames_per_proc, 1,
                                          initial_state.shape[-1]])
         advantages = tf.reshape(tf.squeeze(advantages), [self.num_agents, self.num_frames_per_proc * self.num_procs])
@@ -405,7 +411,7 @@ class MORLTAP:
                log_reward, running_rewards, ini_values
 
     @tf.function
-    def train(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor, mu: tf.Tensor, *args):
+    def train(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor, mu: tf.Tensor, *models):
         """
         :param initial_state: The initial states across the sample environments, shape: (samples x features)
         :param log_reward: A logging helper tensor which captures the current rewards
@@ -414,10 +420,10 @@ class MORLTAP:
         """
 
         observations, acts, masks, returns, values, advantages, state, log_reward, \
-            running_rewards, ini_values = self.train_preprocess(initial_state, log_reward, ii, mu, *args)
+            running_rewards, ini_values = self.train_preprocess(initial_state, log_reward, ii, mu, *models)
         with tf.GradientTape() as tape:
-            loss = self.update_loss(observations, acts, masks, returns, advantages, ii, *args)
-        vars_l = [m.trainable_variables for m in self.models]
+            loss = self.update_loss(observations, acts, masks, returns, advantages, ii, *models)
+        vars_l = [m.trainable_variables for m in models]
         grads_l = tape.gradient(loss, vars_l)
         grads_l_ = [x for y in grads_l for x in y]
         vars_l_ = [x for y in vars_l for x in y]

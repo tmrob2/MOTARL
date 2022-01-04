@@ -20,7 +20,7 @@ class TestEnv(MiniGridEnv):
 
     Note: This environment is deceptively difficult to learn becuase it is actually dynamic"""
 
-    def __init__(self, num_agents=2, gridsize=6, numKeys=1, numBalls=1, numBoxes=2):
+    def __init__(self, num_agents=2, gridsize=6, numKeys=2, numBalls=2, numBoxes=2):
         self.num_agents = num_agents
         self.num_keys = numKeys
         self.num_balls = numBalls
@@ -30,7 +30,7 @@ class TestEnv(MiniGridEnv):
             grid_size=gridsize,
             agent_view_size=gridsize,
             see_through_walls=True,
-            max_steps=500
+            max_steps=50
         )
 
     def _gen_grid(self, width, height):
@@ -39,20 +39,16 @@ class TestEnv(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
 
-        for bin in range(self.num_boxes):
-            obj = Box('grey')
-            self.place_obj(obj)
+        self.grid.set(1, 1, Key('red'))
+        self.grid.set(4, 4, Key('red'))
+        self.grid.set(4, 1, Ball('blue'))
+        self.grid.set(1, 4, Ball('blue'))
 
-        for key in range(self.num_keys):
-            obj = Key('red')
-            self.place_obj(obj)
+        self.grid.set(1, 3, Box('grey'))
+        self.grid.set(4, 3, Box('grey'))
 
-        for ball in range(self.num_balls):
-            obj = Ball('blue')
-            self.place_obj(obj)
-
-        for i in range(self.num_agents):
-            self.place_agent()
+        self.place_agent(top=(0, 0), color='purple')
+        self.place_agent(top=(0, 0), color='green')
 
         self.toggled = False
 

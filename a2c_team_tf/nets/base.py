@@ -6,20 +6,46 @@ from typing import Tuple, List
 class ActorCritic(tf.keras.Model):
     """Actor-critic Neural Network"""
 
-    def __init__(self, n_actions: int, hidden_units: int, num_tasks: int, name: str):
+    def __init__(self, n_actions: int, hidden_units: int, num_tasks: int, name: str, activation="relu"):
         """
         :param n_actions: The number of actions in a model
         :param hidden_units: The number of hidden units
         :param name
         """
         super().__init__()
-        self.fc1 = layers.Dense(hidden_units, activation="relu")
+        self.fc1 = layers.Dense(hidden_units, activation=activation)
         self.actor = layers.Dense(n_actions)
         self.critic = layers.Dense(num_tasks + 1)  # tasks + the agent
         self.model_name = name
 
     def __call__(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
         x = self.fc1(inputs)
+        return self.actor(x), self.critic(x)
+
+
+class DeepActorCritic(tf.keras.Model):
+    """Actor-critic Neural Network"""
+
+    def __init__(self, n_actions: int, hidden_units: int, num_tasks: int,
+                 name: str, feature_set: int, activation="relu"):
+        """
+        :param n_actions: The number of actions in a model
+        :param hidden_units: The number of hidden units
+        :param name
+        """
+        super().__init__()
+        self.mask = layers.Masking()
+        self.fc1 = layers.TimeDistributed(layers.Dense(feature_set, activation=activation))
+        self.fc2 = layers.Dense(hidden_units, activation=activation)
+        self.actor = layers.Dense(n_actions)
+        self.critic = layers.Dense(num_tasks + 1)  # tasks + the agent
+        self.model_name = name
+
+    def call(self, inputs: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+        embedding = self.mask(inputs)
+        x = self.fc1(embedding)
+        x = self.fc1(x)
+        x = self.fc2(x)
         return self.actor(x), self.critic(x)
 
 

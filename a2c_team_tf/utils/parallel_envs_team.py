@@ -8,7 +8,7 @@ import numpy as np
 from a2c_team_tf.utils.dfa import CrossProductDFA, DFA
 
 
-def worker(conn, env: gym.Env, one_off_reward, num_agents, seed=None):
+def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=None):
     while True:
         cmd, data, dfa = conn.recv() # removed task step count
         dfa: List[CrossProductDFA]
@@ -18,7 +18,7 @@ def worker(conn, env: gym.Env, one_off_reward, num_agents, seed=None):
             [d.next(env) for d in dfa]
             # Compute the task rewards from the xDFA
             task_rewards = [d.rewards(one_off_reward) for d in dfa]
-            agent_reward = [0.0 if d.done() else -1.0 for d in dfa]
+            agent_reward = [0.0 if d.done() else -1.0 / n_coeff for d in dfa]
             if all(d.done() for d in dfa) or env.step_count >= env.max_steps:
                 # include a DFA reset
                 done = True
@@ -52,6 +52,7 @@ class ParallelEnv(gym.Env):
             dfas: List[List[CrossProductDFA]],
             one_off_reward,
             num_agents,
+            normalisation_coef=1.0,
             seed=None):  # removed max steps from signature
         self.envs = envs
         self.seed = seed
@@ -61,11 +62,12 @@ class ParallelEnv(gym.Env):
             self.action_space = self.envs[0].action_space
         self.dfas: List[List[CrossProductDFA]] = dfas  # A copy of the cross product DFA for each proc
         self.one_off_reward = one_off_reward  # One off reward given on task completion
+        self.n_coeff = normalisation_coef
         self.locals = []
         for env in self.envs[1:]:
             local, remote = Pipe()
             self.locals.append(local)
-            p = Process(target=worker, args=(remote, env, one_off_reward, num_agents, seed))
+            p = Process(target=worker, args=(remote, env, one_off_reward, num_agents, self.n_coeff, seed))
             p.daemon = True
             p.start()
             remote.close()
@@ -91,7 +93,7 @@ class ParallelEnv(gym.Env):
         obs, reward, done, _ = self.envs[0].step(actions[0])
         [d.next(self.envs[0]) for d in self.dfas[0]]
         # Compute the task rewards from the xDFA
-        agent_rewards = [0.0 if d.done() else -1.0 for d in self.dfas[0]]
+        agent_rewards = [0.0 if d.done() else -1.0 / self.n_coeff for d in self.dfas[0]]
         task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
 
         if all(d.done() for d in self.dfas[0]) or self.envs[0].step_count >= self.envs[0].max_steps:

@@ -30,7 +30,7 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_steps_per_episode = 100
+max_steps_per_episode = 20
 max_episodes = 20000
 num_tasks = 2
 num_agents = 2

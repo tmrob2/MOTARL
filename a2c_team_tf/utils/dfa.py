@@ -26,9 +26,13 @@ class DFA:
         self.rej = rej
         self.states = {}
         self.progress_flag = self.Progress.IN_PROGRESS
+        self.transitions = {}
 
     def add_state(self, name, f):
         self.handlers[name] = f
+
+    def add_transition(self, q, word):
+        self.transitions
 
     def set_start(self, name):
         self.start_state = name.upper()
@@ -101,6 +105,21 @@ class CrossProductDFA:
         self.state_space = list(itertools.product(*states))
         self.statespace_mapping = {k: v for k, v in enumerate(self.state_space)}
         self.state_numbering = list(range(len(self.state_space)))
+
+    def construct_transition_list(self):
+        pass
+
+    def value_iteration(self):
+        state_space_len = len(self.state_space)
+        self.v = [0.] * state_space_len
+        eps = 1.0
+        while eps > 0.:
+            eps = 0.
+            for i in range(state_space_len):
+                v_prime = self.
+
+
+
 
 
 

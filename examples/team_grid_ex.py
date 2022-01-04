@@ -3,7 +3,7 @@ import copy
 import numpy as np
 import tensorflow as tf
 import tqdm
-from a2c_team_tf.nets.base import ActorCrticLSTM
+from a2c_team_tf.nets.base import DeepActorCritic
 from a2c_team_tf.lib.tf2_a2c_base_v2 import MORLTAP
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
@@ -14,24 +14,25 @@ import multiprocessing
 
 # Parameters
 env_key = 'Team-obj-5x5-v0'
-seed = 12345
+seed = 321
 max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_epsiode_steps = 500
-max_episodes = 20000
+max_epsiode_steps = 50
+max_episodes = 120000
 num_tasks = 2
 num_agents = 2
-reward_threshold = 0.9
-running_reward = 0
 # the number of CPUs to run in parallel when generating environments
 num_procs = min(multiprocessing.cpu_count(), 30)
-recurrence = 10
+recurrence = 5
 recurrent = recurrence > 1
 one_off_reward = 100.0
-alpha1 = 1e-5
-alpha2 = 5e-7
+normalisation_coeff = 1.
+entropy_coef = 3.
+alpha1 = 0.00001
+alpha2 = 0.0001
+e, c, chi, lam = 85, 0.8, 1.0, 1.0
 
 # construct DFAs
 class PickupObj(DFAStates, ABC):
@@ -114,17 +115,18 @@ xdfas = [[
         num_tasks=num_tasks,
         dfas=[copy.deepcopy(obj) for obj in [key, ball]],
         agent=agent) for agent in range(num_agents)] for _ in range(num_procs)]
-e, c, chi, lam = 80., 0.8, 1.0, 1.0
-models = [ActorCrticLSTM(envs[0].action_space.n, num_tasks, recurrent) for _ in range(num_agents)]
-agent = MORLTAP(envs, models, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas,
+agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas,
                 one_off_reward=one_off_reward,
                 e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, lr2=alpha2, seed=seed,
                 num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
-                recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key)
+                recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key,
+                normalisation_coef=normalisation_coeff, use_entropy=True, entropy_coef=entropy_coef)
+i_s_shape = agent.tf_reset2().shape[-1]
+models = [DeepActorCritic(envs[0].action_space.n, 64, num_tasks, name=f"agent{i}", activation="tanh", feature_set=i_s_shape) for i in range(num_agents)]
 
 data_writer = AsyncWriter(
-    fname_learning='data-4x4-lstm-ma-learning',
-    fname_alloc='data-4x4-lstm-ma-alloc',
+    fname_learning='data-4x4-ma-learning',
+    fname_alloc='data-4x4-ma-alloc',
     num_agents=num_agents,
     num_tasks=num_tasks)
 
@@ -146,14 +148,14 @@ with tqdm.trange(max_episodes) as t:
     print("mu ", mu)
     for i in t:
         state, log_reward, running_reward, loss, ini_values = agent.train(state, log_reward, indices, mu, *models)
-        # if i % 10 == 0:
-        #     with tf.GradientTape() as tape:
-        #         mu = tf.nn.softmax(kappa, axis=0)
-        #         alloc_loss = agent.update_alloc_loss(ini_values, mu)
-        #     kappa_grads = tape.gradient(alloc_loss, kappa)
-        #     #processed_grads = [-agent.lr2 * g for g in kappa_grads]
-        #     kappa.assign_add(alpha2 * kappa_grads)
-        #     print("mu\n", mu)
+        if i % 50 == 0:
+             with tf.GradientTape() as tape:
+                 mu = tf.nn.softmax(kappa, axis=0)
+                 alloc_loss = agent.update_alloc_loss(ini_values, mu)
+             kappa_grads = tape.gradient(alloc_loss, kappa)
+             #processed_grads = [-agent.lr2 * g for g in kappa_grads]
+             kappa.assign_add(-alpha2 * kappa_grads)
+             print("mu\n", mu)
         t.set_description(f"Batch: {i}")
         for reward in running_reward:
             episodes_reward.append(reward.numpy().flatten())
