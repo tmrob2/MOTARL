@@ -24,18 +24,13 @@ class DFA:
         self.current_state = None
         self.acc = acc
         self.rej = rej
-        self.states = {}
+        self.states = []
         self.progress_flag = self.Progress.IN_PROGRESS
-        self.transitions = {}
+        self.words = {}
 
     def add_state(self, name, f):
+        self.states.append(name)
         self.handlers[name] = f
-
-    def add_transition(self, q, word):
-        self.transitions
-
-    def set_start(self, name):
-        self.start_state = name.upper()
 
     def next(self, state, data, agent):
         if state is not None:
@@ -77,6 +72,7 @@ class CrossProductDFA:
         self.state_numbering = []
         self.statespace_mapping = {}
 
+
     def start(self):
         return tuple([dfa.start_state for dfa in self.dfas])
 
@@ -100,23 +96,47 @@ class CrossProductDFA:
     def done(self):
         return all([dfa.progress_flag == 2 or dfa.progress_flag == -1 for dfa in self.dfas])
 
+
+class RewardMachine(DFA):
+    def __init__(self, start_state, acc, rej):
+        super(RewardMachine, self).__init__(start_state=start_state, acc=acc, rej=rej)
+
+
+class ProductRewardMachine:
+    def __init__(self, RMs, one_off_reward):
+        self.RMs = RMs
+        self.product_states = self.start()
+        self.state_space = []
+        self.state_numbering = []
+        self.statespace_mapping = {}
+        self.product_words = []
+        [self.product_words.extend(rm.words) for rm in RMs]
+        self.one_off_reward = one_off_reward
+
     def compute_state_space(self):
-        states = [dfa.states for dfa in self.dfas]
+        states = [dfa.states for dfa in self.RMs]
         self.state_space = list(itertools.product(*states))
         self.statespace_mapping = {k: v for k, v in enumerate(self.state_space)}
         self.state_numbering = list(range(len(self.state_space)))
 
-    def construct_transition_list(self):
-        pass
+    def next_(self, data):
+        "A next function without side effects"
+        product_state = tuple([rm.next(self.product_states[i], data, None) for (i, rm) in enumerate(self.RMs)])
+        return product_state
+
+    def start(self):
+        return tuple([rm.start_state for rm in self.RMs])
+
+    def rewards(self):
+        rewards = [rm.assign_rewards(self.one_off_reward) for rm in self.RMs]
+        return rewards
 
     def value_iteration(self):
-        state_space_len = len(self.state_space)
-        self.v = [0.] * state_space_len
+        v = [0.] * len(self.state_space)
         eps = 1.0
         while eps > 0.:
-            eps = 0.
-            for i in range(state_space_len):
-                v_prime = self.
+            for q in self.state_space:
+                pass
 
 
 

@@ -15,7 +15,7 @@ def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=Non
         if cmd == "step":  # Worker step command from Pipe
             obs, reward, done, info = env.step(data)
             # Compute the DFA progress
-            [d.next(env) for d in dfa]
+            [d.next({'env': env, 'word': None}) for d in dfa]
             # Compute the task rewards from the xDFA
             task_rewards = [d.rewards(one_off_reward) for d in dfa]
             agent_reward = [0.0 if d.done() else -1.0 / n_coeff for d in dfa]
