@@ -2,6 +2,7 @@ import itertools
 from abc import abstractmethod
 from typing import List
 from enum import IntEnum
+import numpy as np
 
 
 class DFAStates:
@@ -18,7 +19,7 @@ class DFA:
         JUST_FINISHED = 1
         FINISHED = 2
 
-    def __init__(self, start_state, acc, rej):
+    def __init__(self, start_state, acc, rej, words=None):
         self.handlers = {}
         self.start_state = start_state
         self.current_state = None
@@ -26,7 +27,9 @@ class DFA:
         self.rej = rej
         self.states = []
         self.progress_flag = self.Progress.IN_PROGRESS
-        self.words = {}
+        if words is None:
+            words = []
+        self.words = words
 
     def add_state(self, name, f):
         self.states.append(name)
@@ -56,6 +59,34 @@ class DFA:
 
     def assign_reward(self, one_off_reward):
         if self.progress_flag == self.Progress.JUST_FINISHED:
+            return one_off_reward
+        else:
+            return 0.0
+
+
+class RewardMachine(DFA):
+    def __init__(self, start_state, acc, rej, words):
+        super(RewardMachine, self).__init__(
+            start_state=start_state, acc=acc, rej=rej, words=words)
+
+    def next(self, state, data, agent):
+        f = self.handlers[state.upper()]
+        new_state = f(data, agent)
+        progress = self.update_progress(state, new_state)
+        return new_state, progress
+
+    def update_progress(self, q, q_prime):
+        if q not in self.acc and q_prime in self.acc:
+            return self.Progress.JUST_FINISHED
+        elif q in self.acc and q_prime in self.acc:
+            return self.Progress.FINISHED
+        elif q in self.rej or q_prime in self.rej:
+            return self.Progress.FAILED
+        else:
+            return self.Progress.IN_PROGRESS
+
+    def assign_reward(self, one_off_reward, progress):
+        if progress == self.Progress.JUST_FINISHED:
             return one_off_reward
         else:
             return 0.0
@@ -97,46 +128,75 @@ class CrossProductDFA:
         return all([dfa.progress_flag == 2 or dfa.progress_flag == -1 for dfa in self.dfas])
 
 
-class RewardMachine(DFA):
-    def __init__(self, start_state, acc, rej):
-        super(RewardMachine, self).__init__(start_state=start_state, acc=acc, rej=rej)
-
-
-class ProductRewardMachine:
-    def __init__(self, RMs, one_off_reward):
-        self.RMs = RMs
+class RewardMachines:
+    def __init__(self, dfas, one_off_reward, num_tasks):
+        self.rms: List[RewardMachine] = dfas
         self.product_states = self.start()
         self.state_space = []
         self.state_numbering = []
         self.statespace_mapping = {}
         self.product_words = []
-        [self.product_words.extend(rm.words) for rm in RMs]
+        self.concat_product_words()
         self.one_off_reward = one_off_reward
+        self.num_tasks = num_tasks
 
     def compute_state_space(self):
-        states = [dfa.states for dfa in self.RMs]
+        states = [rm.states for rm in self.rms]
         self.state_space = list(itertools.product(*states))
-        self.statespace_mapping = {k: v for k, v in enumerate(self.state_space)}
+        self.statespace_mapping = {v: k for k, v in enumerate(self.state_space)}
         self.state_numbering = list(range(len(self.state_space)))
 
-    def next_(self, data):
-        "A next function without side effects"
-        product_state = tuple([rm.next(self.product_states[i], data, None) for (i, rm) in enumerate(self.RMs)])
-        return product_state
+    def concat_product_words(self):
+        for rm in self.rms:
+            self.product_words.extend(rm.words)
 
     def start(self):
-        return tuple([rm.start_state for rm in self.RMs])
+        return tuple([rm.start_state for rm in self.rms])
 
-    def rewards(self):
-        rewards = [rm.assign_rewards(self.one_off_reward) for rm in self.RMs]
+    def rewards(self, progress: List[RewardMachine.Progress]):
+        rewards = [rm.assign_reward(self.one_off_reward, progress[i]) for (i, rm) in enumerate(self.rms)]
         return rewards
 
-    def value_iteration(self):
-        v = [0.] * len(self.state_space)
-        eps = 1.0
-        while eps > 0.:
-            for q in self.state_space:
-                pass
+    def value_iteration(self, gamma):
+        zero = np.finfo(np.float32).eps.item()
+        v = np.full([len(self.state_space), self.num_tasks], 0.0)
+        eps = self.one_off_reward
+        count = 0
+        while eps > zero:
+            eps_q = np.full([len(self.state_space), self.num_tasks], 0.0)
+            print("count ", count)
+            for i, qbar in enumerate(self.state_space):
+                v_primes = []
+                for w in self.product_words:
+                    xtransition = [rm.next(qbar[i], {'env': None, 'word': w}, None) for i, rm in enumerate(self.rms)]
+                    result = list(zip(*xtransition))
+                    q_prime, progress = result[0], result[1]
+                    rewards = self.rewards(progress)
+                    #print(f"({qbar}, {w}) -> {q_prime}: {self.statespace_mapping[tuple(q_prime)]}")
+                    q_prime_index = self.statespace_mapping[tuple(q_prime)]
+                    v_prime = rewards + gamma * v[q_prime_index]
+                    v_primes.append(v_prime)
+                #print("v's ", v_primes)
+                #print("max v'", max(v_primes, key=tuple))
+                v_prime = max(v_primes, key=tuple)
+                #print("v' ", v_prime)
+                #print("max ", np.maximum(eps_q[i], np.abs(v[i] - v_prime)))
+                eps_q[i] = np.maximum(eps_q[i], np.abs(v[i] - v_prime))
+                #print("eps: \n", eps_q[i])
+                v[i] = v_prime
+                ##print("v \n", v)
+            #print("eps_q \n", eps_q)
+            #print("eps ", np.amax(eps_q))
+            eps = np.amax(eps_q)
+            count += 1
+            #print()
+        #for qv in list(zip(self.state_space, v)):
+        #    print("q, value", qv)
+        return v
+
+
+
+
 
 
 

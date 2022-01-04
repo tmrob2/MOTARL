@@ -4,10 +4,9 @@ import gym
 import numpy as np
 import tensorflow as tf
 import tqdm
-
 from a2c_team_tf.nets.base import DeepActorCritic
 from a2c_team_tf.lib.tf2_a2c_base_v2 import MORLTAP
-from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
+from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA, RewardMachines, RewardMachine
 from abc import ABC
 from a2c_team_tf.envs.team_grid_mult import TestEnv
 from a2c_team_tf.utils.env_utils import make_env
@@ -64,8 +63,47 @@ def make_pickup_key_dfa():
     states = PickupObj()
     dfa.add_state(states.init, pickup_key)
     dfa.add_state(states.carrying, finished_key)
-    dfa.transitions = states.transitions
     return dfa
+
+## Reward machines
+def pickup_ball_rm(data, agent):
+    if data['word'] == "ball":
+        return "C"
+    else:
+        return "I"
+
+def drop_ball_rm(data, agent):
+    if data['word'] == "ball":
+        return "C"
+    else:
+        return "D"
+
+def pickup_key_rm(data, agent):
+    if data['word'] == "key":
+        return "C"
+    else:
+        return "I"
+
+def finished_key_rm(a, b):
+    return "C"
+
+def finished_ball_rm(a, b):
+    return "D"
+
+def make_pickup_ball_rm():
+    rm = RewardMachine(start_state="I", acc=["D"], rej=[], words=["ball", ""])
+    states = PickupObj()
+    rm.add_state(states.init, pickup_ball_rm)
+    rm.add_state(states.carrying, drop_ball_rm)
+    rm.add_state(states.drop, finished_ball_rm)
+    return rm
+
+def make_pickup_key_rm():
+    rm = RewardMachine(start_state="I", acc=["C"], rej=[], words=["key", ""])
+    states = PickupObj()
+    rm.add_state(states.init, pickup_key_rm)
+    rm.add_state(states.carrying, finished_key_rm)
+    return rm
 
 num_tasks = 2
 num_agents = 2
@@ -75,6 +113,7 @@ seed = 123
 env_key = 'Team-obj-5x5-v0'
 max_steps_per_episode = 50
 max_steps_per_update = 10
+one_off_reward = 1.0
 recurrence = 1
 max_episode_steps = 2
 e, c, mu, chi, lam = tf.constant([0.8], dtype=tf.float32), -5.0, 0.5, 1.0, 1.0
@@ -86,8 +125,19 @@ xdfa = CrossProductDFA(
         dfas=[copy.deepcopy(obj) for obj in [key, ball]],
         agent=0)
 
-xdfa.compute_state_space()
-xdfa.construct_transition_list()
+ball_rm = make_pickup_ball_rm()
+key_rm = make_pickup_key_rm()
+
+reward_machine = RewardMachines(
+    dfas=[copy.deepcopy(obj) for obj in [ball_rm, key_rm]],
+    one_off_reward=one_off_reward,
+    num_tasks=num_tasks
+)
+
+reward_machine.compute_state_space()
+print("state space \n", reward_machine.state_space)
+print("state mappings \n", reward_machine.statespace_mapping)
+reward_machine.value_iteration(0.9)
 
 #xdfas = [[
 #    CrossProductDFA(
