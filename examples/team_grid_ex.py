@@ -19,7 +19,7 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_epsiode_steps = 100
+max_epsiode_steps = 200
 max_episodes = 120000
 num_tasks = 2
 num_agents = 2
@@ -27,10 +27,10 @@ num_agents = 2
 num_procs = min(multiprocessing.cpu_count(), 30)
 recurrence = 5
 recurrent = recurrence > 1
-one_off_reward = 100.0
+one_off_reward = 10.0
 normalisation_coeff = 10.
-entropy_coef = 5.
-alpha1 = 0.00001
+entropy_coef = .5
+alpha1 = 0.000001
 alpha2 = 0.0001
 e, c, chi, lam = 10, 0.8, 1.0, 1.0
 
@@ -139,7 +139,7 @@ def make_pickup_ball_rm():
     return rm
 
 def make_pickup_key_rm():
-    rm = RewardMachine(start_state="I", acc=["C"], rej=[], words=["key", ""])
+    rm = RewardMachine(start_state="I", acc=["D"], rej=[], words=["key", ""])
     states = PickupObj()
     rm.add_state(states.init, pickup_key_rm)
     rm.add_state(states.carrying, drop_key_rm)
@@ -169,7 +169,7 @@ key_rm = make_pickup_key_rm()
 ### Caution! The Reward machine must have the same RM ordering as the xDFA sub DFA ordering
 reward_machine = RewardMachines(
     dfas=[copy.deepcopy(obj) for obj in [key_rm, ball_rm]],
-    one_off_reward=1.0,
+    one_off_reward=.1,
     num_tasks=num_tasks
 )
 

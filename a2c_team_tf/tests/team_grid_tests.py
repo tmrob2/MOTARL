@@ -142,6 +142,7 @@ def f(xdfa: CrossProductDFA, agent):
 reward_machine.compute_state_space()
 v = reward_machine.value_iteration(0.9)
 Phi = -1. * v
+print(v)
 xdfa.assign_shaped_rewards(Phi)
 xdfa.assign_reward_machine_mappings(reward_machine.state_space, reward_machine.statespace_mapping)
 
