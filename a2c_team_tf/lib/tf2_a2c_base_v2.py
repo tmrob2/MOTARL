@@ -355,7 +355,7 @@ class MORLTAP:
                 iz = self.tf_2d_indices(agent, ii.shape[0], indices=ix)
                 actions_selected = tf.gather_nd(actions, indices=iz)
                 action_probs_t = tf.nn.softmax(action_logits_t[agent])
-                entropy = self.entropy_coef * tf.reduce_mean(tfp.distributions.Categorical(logits=action_logits_t[agent]).entropy())
+                #entropy = self.entropy_coef * tf.reduce_mean(tfp.distributions.Categorical(logits=action_logits_t[agent]).entropy())
                 #tf.print("entropy shape ", entropy)
                 x = tf.range(ii.shape[0])
                 y = tf.transpose([x, actions_selected])
@@ -365,7 +365,7 @@ class MORLTAP:
                 # entropy = self.entropy_coef * tf.reduce_mean(entropy_raw)
                 critic_loss_agent = tf.nn.compute_average_loss(critic_loss[agent])
                 #tf.print("entropy ", entropy, "agent_loss ", actor_loss_agent)
-                loss_update = loss_update.write(agent, actor_loss_agent + critic_loss_agent + entropy) #
+                loss_update = loss_update.write(agent, actor_loss_agent + critic_loss_agent) #
             loss_update = loss_update.stack()
             loss += loss_update
         loss /= self.recurrence

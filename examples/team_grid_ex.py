@@ -30,7 +30,7 @@ recurrent = recurrence > 1
 one_off_reward = 10.0
 normalisation_coeff = 10.
 entropy_coef = .5
-alpha1 = 0.000001
+alpha1 = 0.00001
 alpha2 = 0.0001
 e, c, chi, lam = 10, 0.8, 1.0, 1.0
 
