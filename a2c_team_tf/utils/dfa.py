@@ -102,7 +102,7 @@ class CrossProductDFA:
         self.state_space = []
         self.state_numbering = []
         self.statespace_mapping = {}
-
+        self.Phi = []  # a list of shaped rewards
 
     def start(self):
         return tuple([dfa.start_state for dfa in self.dfas])
@@ -117,6 +117,13 @@ class CrossProductDFA:
         """
         rewards = [dfa.assign_reward(one_off_reward) for dfa in self.dfas]
         return rewards
+
+    def assign_shaped_rewards(self, v):
+        self.Phi = v
+
+    def assign_reward_machine_mappings(self, state_space, statespace_mapping):
+        self.state_space = state_space
+        self.statespace_mapping = statespace_mapping
 
     def reset(self):
         for dfa in self.dfas:
@@ -164,7 +171,6 @@ class RewardMachines:
         count = 0
         while eps > zero:
             eps_q = np.full([len(self.state_space), self.num_tasks], 0.0)
-            print("count ", count)
             for i, qbar in enumerate(self.state_space):
                 v_primes = []
                 for w in self.product_words:

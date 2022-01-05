@@ -84,7 +84,7 @@ class MORLTAP:
         """Returns state, reward, done flag given an action"""
         state, reward, done, info = self.renv.step(action)
         # where we define the DFA steps
-        [self.dfas[0][k].next(self.renv) for k in range(self.num_agents)]
+        [self.dfas[0][k].next({'env': self.renv, 'word': None}) for k in range(self.num_agents)]
         task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
         agent_reward = [0] * self.num_agents
         if all(d.done() for d in self.dfas[0]):

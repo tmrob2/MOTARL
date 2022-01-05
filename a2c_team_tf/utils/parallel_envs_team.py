@@ -8,16 +8,24 @@ import numpy as np
 from a2c_team_tf.utils.dfa import CrossProductDFA, DFA
 
 
-def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=None):
+def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=None, gamma=0.9):
     while True:
         cmd, data, dfa = conn.recv() # removed task step count
         dfa: List[CrossProductDFA]
         if cmd == "step":  # Worker step command from Pipe
             obs, reward, done, info = env.step(data)
             # Compute the DFA progress
+            Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
             [d.next({'env': env, 'word': None}) for d in dfa]
+            Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
             # Compute the task rewards from the xDFA
-            task_rewards = [d.rewards(one_off_reward) for d in dfa]
+            # to do this we require:
+            #   * the current state
+            #   * next state
+            #   * reward
+            #   * reward machine reward
+            r = [d.rewards(one_off_reward) for d in dfa]
+            task_rewards = (np.array(r) + gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
             agent_reward = [0.0 if d.done() else -1.0 / n_coeff for d in dfa]
             if all(d.done() for d in dfa) or env.step_count >= env.max_steps:
                 # include a DFA reset
@@ -53,10 +61,12 @@ class ParallelEnv(gym.Env):
             one_off_reward,
             num_agents,
             normalisation_coef=1.0,
-            seed=None):  # removed max steps from signature
+            seed=None,
+            gamma=0.9):  # removed max steps from signature
         self.envs = envs
         self.seed = seed
         self.num_agents = num_agents
+        self.gamma = gamma
         if self.envs:
             self.observation_space = self.envs[0].observation_space
             self.action_space = self.envs[0].action_space
@@ -91,11 +101,23 @@ class ParallelEnv(gym.Env):
         for local, action, dfa in zip(self.locals, actions[1:], self.dfas[1:]):
             local.send(("step", action, dfa))
         obs, reward, done, _ = self.envs[0].step(actions[0])
-        [d.next(self.envs[0]) for d in self.dfas[0]]
+        #print([d.state_space for d in self.dfas[0]])
+        Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
+        #print(f"Product states: {[d.product_state for d in self.dfas[0]]}")
+        #print(f"Product state index: {[d.statespace_mapping[d.product_state] for d in self.dfas[0]]}")
+        #print(f"Phi: {[Phi]}")
+        [d.next({'env': self.envs[0], 'word': None}) for d in self.dfas[0]]
+        Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
+        #print(f"Product states new: {[d.product_state for d in self.dfas[0]]}")
+        #print(f"Product state index new: {[d.statespace_mapping[d.product_state] for d in self.dfas[0]]}")
+        #print(f"Phi': {[Phi_prime]}")
         # Compute the task rewards from the xDFA
         agent_rewards = [0.0 if d.done() else -1.0 / self.n_coeff for d in self.dfas[0]]
-        task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
-
+        r = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
+        #print("base rewards ", r)
+        task_rewards = (np.array(r) + self.gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
+        #print(self.gamma * np.array(Phi_prime) - np.array(Phi))
+        #print("shaped task rewards ", task_rewards)
         if all(d.done() for d in self.dfas[0]) or self.envs[0].step_count >= self.envs[0].max_steps:
             # include a DFA reset
             done = True
@@ -107,6 +129,7 @@ class ParallelEnv(gym.Env):
             done = False
         # Concatenate the agent reward and tasks rewards
         reward_ = np.array([np.array([agent_rewards[i]] + task_rewards[i]) for i in range(self.num_agents)])
+        #print("reward ", reward_)
         # Concatenate the environment state and the DFA progress states for each task
         obs_ = np.array([np.append(obs[k], self.dfas[0][k].progress) for k in range(self.num_agents)])
         results = list(zip(*[(obs_, reward_, done, self.dfas[0])] + [local.recv() for local in self.locals]))

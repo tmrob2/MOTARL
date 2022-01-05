@@ -30,7 +30,7 @@ class TestEnv(MiniGridEnv):
             grid_size=gridsize,
             agent_view_size=gridsize,
             see_through_walls=True,
-            max_steps=50
+            max_steps=100
         )
 
     def _gen_grid(self, width, height):
