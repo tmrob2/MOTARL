@@ -19,7 +19,7 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_epsiode_steps = 200
+max_epsiode_steps = 30
 max_episodes = 120000
 num_tasks = 2
 num_agents = 2
@@ -28,11 +28,11 @@ num_procs = min(multiprocessing.cpu_count(), 30)
 recurrence = 5
 recurrent = recurrence > 1
 one_off_reward = 10.0
-normalisation_coeff = 10.
+normalisation_coeff = 1.
 entropy_coef = .5
 alpha1 = 0.00001
 alpha2 = 0.0001
-e, c, chi, lam = 10, 0.8, 1.0, 1.0
+e, c, chi, lam = 15, 0.8, 1.0, 1.0
 
 # construct DFAs
 class PickupObj(DFAStates, ABC):
@@ -40,6 +40,7 @@ class PickupObj(DFAStates, ABC):
         self.init = "I"
         self.carrying = "C"
         self.drop = "D"
+        self.fail = "F"
 
 def pickup_ball(data, agent):
     if data['env'].agents[agent].carrying:
@@ -55,7 +56,15 @@ def drop_ball(data, agent):
         if data['env'].agents[agent].carrying.type == "ball":
             return "C"
         else:
-            return "D"
+            fwd_pos = data['env'].agents[agent].front_pos
+            fwd_cell = data['env'].grid.get(*fwd_pos)
+            if fwd_cell is not None:
+                if fwd_cell.type == "box":
+                    return "D"
+                else:
+                    return "F"
+            else:
+                "F"
     else:
         return "D"
 
@@ -73,30 +82,40 @@ def drop_key(data, agent):
         if data['env'].agents[agent].carrying.type == "key":
             return "C"
         else:
-            return "D"
+            fwd_pos = data['env'].agents[agent].front_pos
+            fwd_cell = data['env'].grid.get(*fwd_pos)
+            if fwd_cell is not None:
+                if fwd_cell.type == "box":
+                    return "D"
+                else:
+                    return "F"
+            else:
+                "F"
     else:
         return "D"
 
-def finished_key(a, b):
+def finished(a, b):
     return "D"
 
-def finished_ball(a, b):
-    return "D"
+def fail(a, b):
+    return "F"
 
 def make_pickupanddrop_ball_dfa():
-    dfa = DFA(start_state="I", acc=["D"], rej=[])
+    dfa = DFA(start_state="I", acc=["D"], rej=["F"])
     states = PickupObj()
     dfa.add_state(states.init, pickup_ball)
     dfa.add_state(states.carrying, drop_ball)
-    dfa.add_state(states.drop, finished_ball)
+    dfa.add_state(states.drop, finished)
+    dfa.add_state(states.fail, fail)
     return dfa
 
 def make_pickup_key_dfa():
-    dfa = DFA(start_state="I", acc=["D"], rej=[])
+    dfa = DFA(start_state="I", acc=["D"], rej=["F"])
     states = PickupObj()
     dfa.add_state(states.init, pickup_key)
     dfa.add_state(states.carrying, drop_key)
-    dfa.add_state(states.drop, finished_key)
+    dfa.add_state(states.drop, finished)
+    dfa.add_state(states.fail, fail)
     return dfa
 
 ## Reward machines
@@ -108,7 +127,9 @@ def pickup_ball_rm(data, agent):
 
 def drop_ball_rm(data, agent):
     if data['word'] == "ball":
-        return "C"
+        return "F"
+    elif data['word'] == "not_box":
+        return "F"
     else:
         return "D"
 
@@ -121,29 +142,27 @@ def pickup_key_rm(data, agent):
 def drop_key_rm(data, agent):
     if data['word'] == "key":
         return "C"
+    elif data['word'] == "not_box":
+        return "F"
     else:
         return "D"
 
-def finished_key_rm(a, b):
-    return "D"
-
-def finished_ball_rm(a, b):
-    return "D"
-
 def make_pickup_ball_rm():
-    rm = RewardMachine(start_state="I", acc=["D"], rej=[], words=["ball", ""])
+    rm = RewardMachine(start_state="I", acc=["D"], rej=["F"], words=["ball", "not_box", "box"])
     states = PickupObj()
     rm.add_state(states.init, pickup_ball_rm)
     rm.add_state(states.carrying, drop_ball_rm)
-    rm.add_state(states.drop, finished_ball_rm)
+    rm.add_state(states.drop, finished)
+    rm.add_state(states.fail, fail)
     return rm
 
 def make_pickup_key_rm():
-    rm = RewardMachine(start_state="I", acc=["D"], rej=[], words=["key", ""])
+    rm = RewardMachine(start_state="I", acc=["D"], rej=["F"], words=["key", "not_box", "box"])
     states = PickupObj()
     rm.add_state(states.init, pickup_key_rm)
     rm.add_state(states.carrying, drop_key_rm)
-    rm.add_state(states.drop, finished_key_rm)
+    rm.add_state(states.drop, finished)
+    rm.add_state(states.fail, fail)
     return rm
 #############################################################################
 #  Construct Environments
@@ -169,7 +188,7 @@ key_rm = make_pickup_key_rm()
 ### Caution! The Reward machine must have the same RM ordering as the xDFA sub DFA ordering
 reward_machine = RewardMachines(
     dfas=[copy.deepcopy(obj) for obj in [key_rm, ball_rm]],
-    one_off_reward=.1,
+    one_off_reward=1.,
     num_tasks=num_tasks
 )
 
@@ -219,14 +238,14 @@ with tqdm.trange(max_episodes) as t:
     print("mu ", mu)
     for i in t:
         state, log_reward, running_reward, loss, ini_values = agent.train(state, log_reward, indices, mu, *models)
-        #if i % 50 == 0:
-        #     with tf.GradientTape() as tape:
-        #         mu = tf.nn.softmax(kappa, axis=0)
-        #         alloc_loss = agent.update_alloc_loss(ini_values, mu)
-        #     kappa_grads = tape.gradient(alloc_loss, kappa)
-        #     #processed_grads = [-agent.lr2 * g for g in kappa_grads]
-        #     kappa.assign_add(-alpha2 * kappa_grads)
-        #     print("mu\n", mu)
+        if i % 50 == 0:
+             with tf.GradientTape() as tape:
+                 mu = tf.nn.softmax(kappa, axis=0)
+                 alloc_loss = agent.update_alloc_loss(ini_values, mu)
+             kappa_grads = tape.gradient(alloc_loss, kappa)
+             #processed_grads = [-agent.lr2 * g for g in kappa_grads]
+             kappa.assign_add(-alpha2 * kappa_grads)
+             print("mu\n", mu)
         t.set_description(f"Batch: {i}")
         for reward in running_reward:
             episodes_reward.append(reward.numpy().flatten())

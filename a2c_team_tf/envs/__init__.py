@@ -3,5 +3,5 @@ from a2c_team_tf.envs.minigrid_empty_mult \
 from a2c_team_tf.envs.minigrid_fetch_mult \
     import MultObjNoGoal, MultObjNoGoal4x4, MultObjNoGoal5x5
 from a2c_team_tf.envs.team_grid_mult \
-    import TestEnv
+    import TestEnv, FourRooms
 from a2c_team_tf.envs.cartpole_ma import CartPoleEnv, CartPoleHeavyLong, CartPoleDefault

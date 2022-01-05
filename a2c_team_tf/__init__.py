@@ -39,3 +39,8 @@ register(
     id='CartPole-heavy-long-v0',
     entry_point='a2c_team_tf.envs.cartpole_ma:CartPoleHeavyLong'
 )
+
+register(
+    id='FourRooms-4a-v0',
+    entry_point='a2c_team_tf.envs.team_grid_mult:FourRooms'
+)
