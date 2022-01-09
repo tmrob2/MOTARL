@@ -6,16 +6,15 @@ from a2c_team_tf.utils.parallel_envs_team import ParallelEnv
 from a2c_team_tf.utils.env_utils import make_env
 import tensorflow_probability as tfp
 
-class MORLTAP:
+class MTARL:
     def __init__(self, envs, num_agents,
                  num_tasks, xdfas, one_off_reward,
                  e, c, chi, lam,
-                 gamma=1.0, lr=1e-4, lr2=1e-4, entropy_coef=0.01,
-                 use_entropy=False, seed=None, num_procs=10, num_frames_per_proc=100,
+                 gamma=1.0, lr=1e-4, lr2=1e-4,
+                 seed=None, num_procs=10, num_frames_per_proc=100,
                  recurrence=1, max_eps_steps=100, env_key=None,
-                 flatten_env=False, normalisation_coef=1.0):
-        self.recurrent = recurrence > 1
-        self.recurrence = recurrence
+                 flatten_env=False, normalisation_coef=1.0, normalisation_coef2=1.0,
+                 reward_machine=False, shaped_rewards=False):
         self.num_agents = num_agents
         self.envs: ParallelEnv = ParallelEnv(
                 envs,
@@ -23,13 +22,20 @@ class MORLTAP:
                 one_off_reward,
                 num_agents,
                 normalisation_coef,
-                seed)
+                normalisation_coef2,
+                seed,
+                0.9,
+                reward_machine,
+                shaped_rewards)
         if env_key:
             self.renv = make_env(
                 env_key=env_key,
                 max_steps_per_episode=max_eps_steps,
                 seed=seed,
                 apply_flat_wrapper=flatten_env)
+        self.shaped_rewards = shaped_rewards
+        self.recurrent = recurrence > 1
+        self.recurrence = recurrence
         self.num_tasks = num_tasks
         self.dfas = xdfas
         self.one_off_reward = one_off_reward
@@ -37,7 +43,6 @@ class MORLTAP:
         self.lr = lr
         self.lr2 = lr2
         self.gamma = gamma
-        self.entropy_coef = tf.constant(entropy_coef, dtype=tf.float32) if use_entropy else tf.constant(0.0, dtype=tf.float32)
         self.seed = seed
         self.opt = tf.keras.optimizers.Adam(learning_rate=self.lr)
         self.huber = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
@@ -80,29 +85,28 @@ class MORLTAP:
     def tf_reset2(self):
         return tf.numpy_function(self.reset, [], [tf.float32])
 
-    def render_env_step(self, action: np.array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def render_env_step(self, action: np.array) -> Tuple[np.ndarray, np.ndarray]:
         """Returns state, reward, done flag given an action"""
         state, reward, done, info = self.renv.step(action)
         # where we define the DFA steps
-        [self.dfas[0][k].next({'env': self.renv, 'word': None}) for k in range(self.num_agents)]
-        task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
-        agent_reward = [0] * self.num_agents
+        [self.dfas[0][k].next({'env': self.renv, 'word': None, 'action': action}) for k in range(self.num_agents)]
+        #task_rewards = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
+        #agent_reward = [0] * self.num_agents
         if all(d.done() for d in self.dfas[0]):
             # Assign the agent reward
             done = True
         else:
             # agent_reward = reward
             done = False
-        rewards_ = np.array([agent_reward] + task_rewards)
+        #rewards_ = np.array([agent_reward] + task_rewards)
         state_ = np.array([np.append(state[k], self.dfas[0][k].progress) for k in range(self.num_agents)])
         state_ = np.expand_dims(state_, 1)
         return (
             state_.astype(np.float32),
-            np.array(rewards_, np.float32),
             np.array(done, np.int32))
 
     def tf_render_env_step(self, action: tf.Tensor) -> List[tf.Tensor]:
-        return tf.numpy_function(self.render_env_step, [action], [tf.float32, tf.float32, tf.int32])
+        return tf.numpy_function(self.render_env_step, [action], [tf.float32, tf.int32])
 
     def env_step(self, actions: np.array):
         actions = actions.transpose()
@@ -124,7 +128,7 @@ class MORLTAP:
             action_logits_t = tf.squeeze(action_logits_t, axis=1)
             actions = self.collect_actions(action_logits_t)
             # Apply the action to the environment to get the next state and reward
-            state, rewards, done = self.tf_render_env_step(actions)
+            state, done = self.tf_render_env_step(actions)
             state = tf.expand_dims(state, 1)
             if tf.cast(done, tf.bool):
                 break
@@ -141,7 +145,7 @@ class MORLTAP:
         actions = actions.stack()
         return actions
 
-    @tf.function
+    #@tf.function
     def collect_batch(self, initial_obs: tf.Tensor, log_reward: tf.Tensor, *args):
         """Collects rollouts and computes advantages
         The expected shape of log_rewards is (samples, num_agents, tasks + 1)
@@ -163,7 +167,7 @@ class MORLTAP:
         #print("log reward shape ", log_reward.shape)
         observations = tf.TensorArray(dtype=tf.float32, size=self.num_frames_per_proc)
         selected_actions = tf.TensorArray(dtype=tf.int32, size=self.num_frames_per_proc)
-        values = tf.TensorArray(dtype=tf.float32, size=self.num_frames_per_proc)
+        values = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
         rewards = tf.TensorArray(dtype=tf.float32, size=self.num_frames_per_proc)
         masks = tf.TensorArray(dtype=tf.float32, size=self.num_frames_per_proc)
         running_rewards = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
@@ -202,6 +206,9 @@ class MORLTAP:
         ##   S - samples (generated by parallel env procs)
         ##   D - tasks + 1  (agent)
         # action_probs = action_probs.stack() #
+        if self.shaped_rewards:
+            _, value = self.call_models(state, *args)
+            values = values.write(self.num_frames_per_proc, value)
         values = values.stack()
         rewards = rewards.stack()
         masks = masks.stack()
@@ -229,12 +236,19 @@ class MORLTAP:
         for agent in tf.range(self.num_agents):
             adv_proc = tf.TensorArray(dtype=tf.float32, size=self.num_procs)
             for p in tf.range(self.num_procs):
-                sample_advantage = tf.matmul(returns[:, agent, p] - values[:, agent, p], tf.expand_dims(H_agent_vals[agent, p], 1))
+                if self.shaped_rewards:
+                    sample_advantage = tf.matmul(returns[:, agent, p], tf.expand_dims(H_agent_vals[agent, p], 1))
+                else:
+                    sample_advantage = tf.matmul(returns[:, agent, p] - values[:, agent, p], tf.expand_dims(H_agent_vals[agent, p], 1))
                 adv_proc = adv_proc.write(p, sample_advantage)
             adv_proc = adv_proc.stack()
             advantages = advantages.write(agent, adv_proc)
         advantages = advantages.stack()
         return advantages
+
+    def get_shaped_returns(self, rewards:  tf.Tensor, values: tf.Tensor):
+        return rewards + values[1:] - values[:-1]
+
 
     def get_expected_return(self, rewards: tf.Tensor) -> tf.Tensor:
         """Expects the shape of rewards to be (steps, proc_sample, tasks + 1)"""
@@ -380,7 +394,11 @@ class MORLTAP:
         acts, obss, values, rewards, masks, state, running_rewards, log_reward = \
             self.collect_batch(initial_state, log_reward, *args)
 
-        returns = self.get_expected_return(rewards)
+        # if we are using shaped rewards we don't use the returns and the values shape will be one datum larger than usual
+        if self.shaped_rewards:
+            returns = self.get_shaped_returns(rewards, values)
+        else:
+            returns = self.get_expected_return(rewards)
         ini_values = values[0, :, :]
         advantages = self.compute_advantages(returns, values, ini_values, mu)
         ## concatenate actions together => actions reshape: T x A x S -> A x S x T -> A * S * T
@@ -410,7 +428,7 @@ class MORLTAP:
         return observations, acts, masks, returns, values, advantages, state, \
                log_reward, running_rewards, ini_values
 
-    @tf.function
+    #@tf.function
     def train(self, initial_state: tf.Tensor, log_reward: tf.Tensor, ii: tf.Tensor, mu: tf.Tensor, *models):
         """
         :param initial_state: The initial states across the sample environments, shape: (samples x features)

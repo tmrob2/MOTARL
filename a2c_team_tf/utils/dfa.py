@@ -3,6 +3,7 @@ from abc import abstractmethod
 from typing import List
 from enum import IntEnum
 import numpy as np
+import sys
 
 
 class DFAStates:
@@ -26,14 +27,29 @@ class DFA:
         self.acc = acc
         self.rej = rej
         self.states = []
+        self.state_value_mapping = {}
+        self.distance = {}
         self.progress_flag = self.Progress.IN_PROGRESS
         if words is None:
             words = []
+        self.max_value = 0.
         self.words = words
 
     def add_state(self, name, f):
         self.states.append(name)
         self.handlers[name] = f
+
+    def distance_from_root(self, dist, state_mapping):
+        """Caution! make sure that the state mappings are the same ordering as the adjacency matrix"""
+        for k,v in state_mapping.items():
+            if k not in self.rej:
+                self.distance[k] = float(dist[v])
+            else:
+                self.distance[k] = 0.
+
+    def assign_max_value(self, max_steps):
+        max_ = max([v for k,v in self.distance.items()])
+        self.max_value =  float(max_steps - 1) * (max_ - 1.0) + max_
 
     def next(self, state, data, agent):
         if state is not None:
@@ -200,6 +216,67 @@ class RewardMachines:
         #    print("q, value", qv)
         return v
 
+
+class Graph():
+
+    def __init__(self, vertices):
+        self.V = vertices
+        self.graph = [[0 for column in range(vertices)]
+                    for row in range(vertices)]
+
+    def printSolution(self, dist):
+        print("Vertex \tDistance from Source")
+        for node in range(self.V):
+            print(node, "\t", dist[node])
+
+    # A utility function to find the vertex with
+    # minimum distance value, from the set of vertices
+    # not yet included in shortest path tree
+    def minDistance(self, dist, sptSet):
+
+        # Initialize minimum distance for next node
+        #min = sys.maxint
+        min = float("inf")
+
+        # Search not nearest vertex not in the
+        # shortest path tree
+        for u in range(self.V):
+            if dist[u] < min and sptSet[u] == False:
+                min = dist[u]
+                min_index = u
+
+        return min_index
+
+    # Function that implements Dijkstra's single source
+    # shortest path algorithm for a graph represented
+    # using adjacency matrix representation
+    def dijkstra(self, src):
+
+        dist = [float("inf")] * self.V
+        dist[src] = 0
+        sptSet = [False] * self.V
+
+        for cout in range(self.V):
+
+            # Pick the minimum distance vertex from
+            # the set of vertices not yet processed.
+            # x is always equal to src in first iteration
+            x = self.minDistance(dist, sptSet)
+
+            # Put the minimum distance vertex in the
+            # shortest path tree
+            sptSet[x] = True
+
+            # Update dist value of the adjacent vertices
+            # of the picked vertex only if the current
+            # distance is greater than new distance and
+            # the vertex in not in the shortest path tree
+            for y in range(self.V):
+                if self.graph[x][y] > 0 and sptSet[y] == False and \
+                dist[y] > dist[x] + self.graph[x][y]:
+                        dist[y] = dist[x] + self.graph[x][y]
+
+        return dist
 
 
 

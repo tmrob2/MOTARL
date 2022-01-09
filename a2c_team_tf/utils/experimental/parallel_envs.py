@@ -15,7 +15,7 @@ def worker(conn, env: gym.Env, one_off_reward, seed=None):
         if cmd == "step":  # Worker step command from Pipe
             obs, reward, done, info = env.step(data)
             # Compute the DFA progress
-            dfa.next(env)
+            dfa.next({'env': env, 'word': None, 'action': data})
             # Compute the task rewards from the xDFA
             task_rewards = dfa.rewards(one_off_reward)
             agent_reward = 0.0 if dfa.done() else reward
@@ -96,7 +96,7 @@ class ParallelEnv(gym.Env):
         for local, action, dfa in zip(self.locals[agent], actions[1:], self.dfas[agent][1:]):
             local.send(("step", action, dfa))
         obs, reward, done, _ = self.envs[agent][0].step(actions[0])
-        self.dfas[agent][0].next(self.envs[agent][0])
+        self.dfas[agent][0].next({'env': self.envs[agent][0], 'word': None, 'action': actions[0]})
         # Compute the task rewards from the xDFA
         agent_rewards = 0.0 if self.dfas[agent][0].done() else reward
         task_rewards = self.dfas[agent][0].rewards(self.one_off_reward)

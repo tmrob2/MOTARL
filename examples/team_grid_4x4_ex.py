@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 import tqdm
 from a2c_team_tf.nets.base import DeepActorCritic
-from a2c_team_tf.lib.tf2_a2c_base_v2 import MORLTAP
+from a2c_team_tf.lib.tf2_a2c_base_v2 import MTARL
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA, RewardMachines, RewardMachine
 from abc import ABC
 from a2c_team_tf.envs.team_grid_mult import TestEnv
@@ -19,18 +19,18 @@ max_steps_per_update = 10
 np.random.seed(seed)
 tf.random.set_seed(seed)
 min_episode_criterion = 100
-max_epsiode_steps = 30
+max_epsiode_steps = 15
 max_episodes = 120000
 num_tasks = 2
 num_agents = 2
 # the number of CPUs to run in parallel when generating environments
 num_procs = min(multiprocessing.cpu_count(), 30)
-recurrence = 5
+recurrence = 1
 recurrent = recurrence > 1
 one_off_reward = 10.0
 normalisation_coeff = 1.
 entropy_coef = .5
-alpha1 = 0.00001
+alpha1 = 0.0001
 alpha2 = 0.0001
 e, c, chi, lam = 15, 0.8, 1.0, 1.0
 
@@ -127,7 +127,7 @@ def pickup_ball_rm(data, agent):
 
 def drop_ball_rm(data, agent):
     if data['word'] == "ball":
-        return "F"
+        return "C"
     elif data['word'] == "not_box":
         return "F"
     else:
@@ -205,12 +205,12 @@ xdfa.assign_reward_machine_mappings(reward_machine.state_space, reward_machine.s
 
 xdfas = [[f(copy.deepcopy(xdfa), agent) for agent in range(num_agents)] for _ in range(num_procs)]
 
-agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas,
-                one_off_reward=one_off_reward,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, lr2=alpha2, seed=seed,
-                num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
-                recurrence=recurrence, max_eps_steps=max_epsiode_steps, env_key=env_key,
-                normalisation_coef=normalisation_coeff, use_entropy=True, entropy_coef=entropy_coef)
+agent = MTARL(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas,
+              one_off_reward=one_off_reward,
+              e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, lr2=alpha2, seed=seed,
+              num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
+              max_eps_steps=max_epsiode_steps, env_key=env_key,
+              normalisation_coef=normalisation_coeff)
 i_s_shape = agent.tf_reset2().shape[-1]
 models = [DeepActorCritic(envs[0].action_space.n, 64, num_tasks, name=f"agent{i}", activation="tanh", feature_set=i_s_shape) for i in range(num_agents)]
 
@@ -238,7 +238,7 @@ with tqdm.trange(max_episodes) as t:
     print("mu ", mu)
     for i in t:
         state, log_reward, running_reward, loss, ini_values = agent.train(state, log_reward, indices, mu, *models)
-        if i % 50 == 0:
+        if i % 10 == 0:
              with tf.GradientTape() as tape:
                  mu = tf.nn.softmax(kappa, axis=0)
                  alloc_loss = agent.update_alloc_loss(ini_values, mu)

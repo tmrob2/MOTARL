@@ -1,6 +1,6 @@
 import os
 import tensorflow as tf
-from a2c_team_tf.lib.experimental.tf2_a2c_base import MORLTAP
+from a2c_team_tf.lib.experimental.tf2_a2c_base import MTARL
 import numpy as np
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
@@ -86,9 +86,9 @@ xdfas = [[
         num_tasks=num_tasks,
         dfas=[copy.deepcopy(obj) for obj in [key, ball]],
         agent=agent) for agent in range(num_agents)] for _ in range(num_procs)]
-agent = MORLTAP(envs=[], models=models, num_agents=num_agents, num_tasks=num_tasks, xdfas=xdfas,
-                one_off_reward=1.0,
-                e=e, c=c, chi=chi, lam=lam, env_key=env_key, seed=seed, recurrence=4, flatten_env=False)
+agent = MTARL(envs=[], models=models, num_agents=num_agents, num_tasks=num_tasks, xdfas=xdfas,
+              one_off_reward=1.0,
+              e=e, c=c, chi=chi, lam=lam, env_key=env_key, seed=seed, recurrence=4, flatten_env=False)
 
 @click.command()
 @click.option('--render/--no-render', default=True)

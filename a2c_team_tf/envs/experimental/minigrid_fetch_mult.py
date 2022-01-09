@@ -18,7 +18,7 @@ class MultObjNoGoal(MiniGridEnv):
 
         super().__init__(
             grid_size=size,
-            max_steps=100,
+            max_steps=20,
             # Set this to True for maximum speed
             see_through_walls=True
         )
@@ -32,20 +32,14 @@ class MultObjNoGoal(MiniGridEnv):
         self.grid.vert_wall(0, 0)
         self.grid.vert_wall(width-1, 0)
 
-        types = ['key', 'ball']
-
-        objs = []
-
         # For each object to be generated
         for key in range(self.numKeys):
             obj = Key('red')
             self.place_obj(obj)
-            objs.append(obj)
 
         for ball in range(self.numBalls):
             obj = Ball('blue')
             self.place_obj(obj)
-            objs.append(ball)
 
         # Randomize the player start position and orientation
         self.place_agent()

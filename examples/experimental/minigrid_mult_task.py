@@ -15,7 +15,7 @@ import numpy as np
 import tensorflow as tf
 import tqdm
 from a2c_team_tf.nets.base import ActorCrticLSTM
-from a2c_team_tf.lib.experimental.tf2_a2c_base import MORLTAP
+from a2c_team_tf.lib.experimental.tf2_a2c_base import MTARL
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA
 from abc import ABC
 from a2c_team_tf.envs.minigrid_fetch_mult import MultObjNoGoal4x4
@@ -141,12 +141,12 @@ q2 = tf.queue.FIFOQueue(capacity=max_steps_per_update * num_procs * num_tasks * 
 
 models = [ActorCrticLSTM(action_space, num_tasks, recurrent) for _ in range(num_agents)]
 log_rewards = tf.Variable(tf.zeros([num_agents, num_procs, num_tasks + 1], dtype=tf.float32))
-agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=one_off_reward,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, seed=seed,
-                num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
-                recurrence=recurrence, max_eps_steps=max_episodes, env_key=env_key,
-                observation_space=observation_space, action_space=action_space, flatten_env=True,
-                q1=q1, q2=q2, log_reward=log_rewards)
+agent = MTARL(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=one_off_reward,
+              e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=alpha1, seed=seed,
+              num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
+              recurrence=recurrence, max_eps_steps=max_episodes, env_key=env_key,
+              observation_space=observation_space, action_space=action_space, flatten_env=True,
+              q1=q1, q2=q2, log_reward=log_rewards)
 data_writer = AsyncWriter(
     fname_learning='data-4x4-lstm-ma-learning',
     fname_alloc='data-4x4-lstm-ma-alloc',

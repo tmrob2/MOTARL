@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 import tqdm
 from a2c_team_tf.nets.base import DeepActorCritic
-from a2c_team_tf.lib.tf2_a2c_base_v2 import MORLTAP
+from a2c_team_tf.lib.tf2_a2c_base_v2 import MTARL
 from a2c_team_tf.utils.dfa import DFAStates, DFA, CrossProductDFA, RewardMachines, RewardMachine
 from abc import ABC
 from a2c_team_tf.envs.team_grid_mult import TestEnv
@@ -152,10 +152,10 @@ for i in range(num_procs):
     eseed = seed
     envs.append(make_env(env_key=env_key, max_steps_per_episode=max_steps_per_episode, apply_flat_wrapper=False))
 # generate a list of input samples for each agent and input this into the model
-agent = MORLTAP(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=1.0,
-                e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, seed=seed,
-                num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
-                recurrence=recurrence, max_eps_steps=max_episode_steps, env_key=env_key)
+agent = MTARL(envs, num_tasks=num_tasks, num_agents=num_agents, xdfas=xdfas, one_off_reward=1.0,
+              e=e, c=c, chi=chi, lam=lam, gamma=1.0, lr=5e-5, seed=seed,
+              num_procs=num_procs, num_frames_per_proc=max_steps_per_update,
+              recurrence=recurrence, max_eps_steps=max_episode_steps, env_key=env_key)
 
 kappa = tf.Variable(np.full([num_agents, num_tasks], 1.0 / num_agents), dtype=tf.float32)
 mu = tf.nn.softmax(kappa, axis=0)

@@ -8,16 +8,20 @@ import numpy as np
 from a2c_team_tf.utils.dfa import CrossProductDFA, DFA
 
 
-def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=None, gamma=0.9):
+def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, n_coeff2=1.0,
+           seed=None, gamma=0.9, reward_machine=False, shaped_rewards=False):
     while True:
-        cmd, data, dfa = conn.recv() # removed task step count
+        cmd, action, dfa = conn.recv() # removed task step count
         dfa: List[CrossProductDFA]
         if cmd == "step":  # Worker step command from Pipe
-            obs, reward, done, info = env.step(data)
+            obs, reward, done, info = env.step(action)
             # Compute the DFA progress
-            Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
-            [d.next({'env': env, 'word': None}) for d in dfa]
-            Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
+            if reward_machine:
+                Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
+                [d.next({'env': env, 'word': None, 'action': action}) for d in dfa]
+                Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in dfa]
+            else:
+                [d.next({'env': env, 'word': None, 'action': action}) for d in dfa]
             # Compute the task rewards from the xDFA
             # to do this we require:
             #   * the current state
@@ -25,7 +29,15 @@ def worker(conn, env: gym.Env, one_off_reward, num_agents, n_coeff=1.0, seed=Non
             #   * reward
             #   * reward machine reward
             r = [d.rewards(one_off_reward) for d in dfa]
-            task_rewards = (np.array(r) + gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
+            if reward_machine:
+                task_rewards = (np.array(r) + gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
+            else:
+                if shaped_rewards:
+                    distance_rewards = [d_.distance[d.product_state[i]] / n_coeff2 for d in dfa for
+                                        (i, d_) in enumerate(d.dfas)]
+                    task_rewards = [[r_[0] + distance_rewards[i]] for i, r_ in enumerate(r)]
+                else:
+                    task_rewards = r
             agent_reward = [0.0 if d.done() else -1.0 / n_coeff for d in dfa]
             if all(d.done() for d in dfa) or env.step_count >= env.max_steps:
                 # include a DFA reset
@@ -61,8 +73,11 @@ class ParallelEnv(gym.Env):
             one_off_reward,
             num_agents,
             normalisation_coef=1.0,
+            normalisation_coef2=1.0,
             seed=None,
-            gamma=0.9):  # removed max steps from signature
+            gamma=0.9,
+            reward_machine=False,
+            shaped_rewards=False):  # removed max steps from signature
         self.envs = envs
         self.seed = seed
         self.num_agents = num_agents
@@ -73,11 +88,15 @@ class ParallelEnv(gym.Env):
         self.dfas: List[List[CrossProductDFA]] = dfas  # A copy of the cross product DFA for each proc
         self.one_off_reward = one_off_reward  # One off reward given on task completion
         self.n_coeff = normalisation_coef
+        self.n2_coeff = normalisation_coef2
+        self.reward_machine = reward_machine
+        self.shaped_rewards = shaped_rewards
         self.locals = []
         for env in self.envs[1:]:
             local, remote = Pipe()
             self.locals.append(local)
-            p = Process(target=worker, args=(remote, env, one_off_reward, num_agents, self.n_coeff, seed))
+            p = Process(target=worker, args=(remote, env, one_off_reward, num_agents,
+                                             self.n_coeff,self.n2_coeff,seed, gamma, reward_machine, shaped_rewards))
             p.daemon = True
             p.start()
             remote.close()
@@ -101,23 +120,27 @@ class ParallelEnv(gym.Env):
         for local, action, dfa in zip(self.locals, actions[1:], self.dfas[1:]):
             local.send(("step", action, dfa))
         obs, reward, done, _ = self.envs[0].step(actions[0])
-        #print([d.state_space for d in self.dfas[0]])
-        Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
-        #print(f"Product states: {[d.product_state for d in self.dfas[0]]}")
-        #print(f"Product state index: {[d.statespace_mapping[d.product_state] for d in self.dfas[0]]}")
-        #print(f"Phi: {[Phi]}")
-        [d.next({'env': self.envs[0], 'word': None}) for d in self.dfas[0]]
-        Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
-        #print(f"Product states new: {[d.product_state for d in self.dfas[0]]}")
-        #print(f"Product state index new: {[d.statespace_mapping[d.product_state] for d in self.dfas[0]]}")
-        #print(f"Phi': {[Phi_prime]}")
+        if self.reward_machine:
+            Phi = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
+            [d.next({'env': self.envs[0], 'word': None, 'action': actions[0]}) for d in self.dfas[0]]
+            Phi_prime = [d.Phi[d.statespace_mapping[d.product_state]] for d in self.dfas[0]]
+        else:
+            [d.next({'env': self.envs[0], 'word': None, 'action': actions[0]}) for d in self.dfas[0]]
         # Compute the task rewards from the xDFA
+        # print()
         agent_rewards = [0.0 if d.done() else -1.0 / self.n_coeff for d in self.dfas[0]]
         r = [d_.rewards(self.one_off_reward) for d_ in self.dfas[0]]
-        #print("base rewards ", r)
-        task_rewards = (np.array(r) + self.gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
-        #print(self.gamma * np.array(Phi_prime) - np.array(Phi))
-        #print("shaped task rewards ", task_rewards)
+        if self.reward_machine:
+            task_rewards = (np.array(r) + self.gamma * np.array(Phi_prime) - np.array(Phi)).tolist()
+        else:
+            if self.shaped_rewards:
+                distance_rewards = [d_.distance[d.product_state[i]] / self.n2_coeff for d in self.dfas[0] for (i, d_) in enumerate(d.dfas)]
+                task_rewards = [[r_[0] + distance_rewards[i]] for i,r_ in enumerate(r)]
+            else:
+                task_rewards = r
+            #task_rewards = r + [[d.distance[q]] for d in self.dfas[0] for q in d.product_state]
+        #print("states \n", [d.product_state for d in self.dfas[0]], "\nshaped task rewards \n", task_rewards)
+        #print()
         if all(d.done() for d in self.dfas[0]) or self.envs[0].step_count >= self.envs[0].max_steps:
             # include a DFA reset
             done = True

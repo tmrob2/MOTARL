@@ -17,17 +17,22 @@ register(
 
 register(
     id='Mult-obj-5x5-v0',
-    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObjNoGoal5x5'
+    entry_point='a2c_team_tf.envs.experimental.minigrid_fetch_mult:MultObjNoGoal5x5'
 )
 
 register(
     id='Mult-obj-4x4-v0',
-    entry_point='a2c_team_tf.envs.minigrid_fetch_mult:MultObjNoGoal4x4'
+    entry_point='a2c_team_tf.envs.experimental.minigrid_fetch_mult:MultObjNoGoal4x4'
 )
 
 register(
     id='Team-obj-5x5-v0',
     entry_point='a2c_team_tf.envs.team_grid_mult:TestEnv'
+)
+
+register(
+    id='Team-obj-4x4-door-v0',
+    entry_point='a2c_team_tf.envs.team_grid_mult:TestEnv2'
 )
 
 register(
@@ -41,6 +46,6 @@ register(
 )
 
 register(
-    id='FourRooms-4a-v0',
-    entry_point='a2c_team_tf.envs.team_grid_mult:FourRooms'
+    id='DualDoors-v0',
+    entry_point='a2c_team_tf.envs.team_grid_mult:DualDoors'
 )
